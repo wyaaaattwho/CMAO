@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,7 @@ from .answer_judge import AnswerJudge, extract_final_answer
 from .cmao import CMAOComputer
 from .config import load_config
 from .datasets import load_problems
-from .io_utils import save_json
+from .io_utils import ensure_parent, save_json
 from .mode_tagger import ModeTagger
 from .quality_scorer import QualityScorer
 from .train_types import PolicyTrainingRecord
@@ -93,6 +94,7 @@ class OnlineGRPOConfig:
     lora_alpha: int = 32
     lora_dropout: float = 0.05
     lora_target_modules: list[str] | None = None
+    save_rollout_log: bool = True
 
 
 def training_config_from_dict(config: dict[str, Any]) -> TrainingConfig:
@@ -181,6 +183,7 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         lora_alpha=lora_cfg.get("alpha", 32),
         lora_dropout=lora_cfg.get("dropout", 0.05),
         lora_target_modules=lora_cfg.get("target_modules"),
+        save_rollout_log=train_cfg.get("save_rollout_log", True),
     )
 
 
@@ -346,6 +349,7 @@ class OnlineRolloutBatch:
     correct: Any
     quality_score: Any
     groups: list[ScoredGroup]
+    diagnostics: dict[str, Any]
 
 
 class CMAOTrainer:
@@ -657,6 +661,16 @@ class OnlineGRPOTrainer:
             lambda_mode=config.lambda_mode,
             quality_pairwise_margin=config.quality_pairwise_margin,
         )
+        self.output_dir = Path(config.output_dir)
+        self.metrics_path = self.output_dir / "online_metrics.jsonl"
+        self.rollout_log_path = self.output_dir / "online_rollouts.jsonl"
+
+    def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
+        if not self.accelerator.is_main_process:
+            return
+        target = ensure_parent(path)
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
     def _build_trainable_model(self):
         model = self.AutoModelForCausalLM.from_pretrained(
@@ -703,13 +717,55 @@ class OnlineGRPOTrainer:
                 "optimizer_step": optimizer_step,
                 "sample_count": int(rollout.input_ids.shape[0]),
                 "correct_ratio": float(rollout.correct.mean().item()),
+                "correct_count": int(rollout.correct.sum().item()),
                 "quality_score_mean": float(rollout.quality_score.mean().item()),
                 "a_ans_mean": float(rollout.a_ans.mean().item()),
                 "a_qual_mean": float(rollout.a_qual.mean().item()),
                 "a_mode_mean": float(rollout.a_mode.mean().item()),
+                "a_total_abs_mean": float(
+                    build_total_advantage(
+                        rollout.a_ans,
+                        rollout.a_qual,
+                        rollout.a_mode,
+                        lambda_ans=self.config.lambda_ans,
+                        lambda_qual=self.config.lambda_qual,
+                        lambda_mode=self.config.lambda_mode,
+                    )
+                    .abs()
+                    .mean()
+                    .item()
+                ),
+                "nonzero_advantage_ratio": float(
+                    (
+                        build_total_advantage(
+                            rollout.a_ans,
+                            rollout.a_qual,
+                            rollout.a_mode,
+                            lambda_ans=self.config.lambda_ans,
+                            lambda_qual=self.config.lambda_qual,
+                            lambda_mode=self.config.lambda_mode,
+                        ).abs()
+                        > 1e-8
+                    )
+                    .float()
+                    .mean()
+                    .item()
+                ),
+                "response_tokens_mean": rollout.diagnostics["response_tokens_mean"],
+                "problem_ids": rollout.diagnostics["problem_ids"],
                 **update_summary,
             }
             history.append(record)
+            self._append_jsonl(self.metrics_path, record)
+            if self.config.save_rollout_log:
+                self._append_jsonl(
+                    self.rollout_log_path,
+                    {
+                        "iteration": iteration + 1,
+                        "optimizer_step": optimizer_step,
+                        **rollout.diagnostics,
+                    },
+                )
 
             if (iteration + 1) % self.config.logging_steps == 0:
                 self.accelerator.print(
@@ -718,7 +774,10 @@ class OnlineGRPOTrainer:
                     f"loss={record['loss']:.4f}",
                     f"kl={record['kl']:.4f}",
                     f"clip={record['clip_fraction']:.3f}",
-                    f"correct={record['correct_ratio']:.3f}",
+                    f"correct={record['correct_count']}/{record['sample_count']}",
+                    f"adv_nonzero={record['nonzero_advantage_ratio']:.3f}",
+                    f"atok={record['response_tokens_mean']:.1f}",
+                    f"pid={','.join(record['problem_ids'])}",
                 )
             if self.config.save_steps > 0 and optimizer_step > 0 and optimizer_step % self.config.save_steps == 0:
                 self._save_checkpoint(f"checkpoint-step-{optimizer_step}")
@@ -828,13 +887,57 @@ class OnlineGRPOTrainer:
         advantages = []
         correct = []
         quality_scores = []
+        rollout_groups = []
         for group in scored_groups:
+            group_correct = sum(1 for item in group.scored_samples if item.score.answer_correct)
+            group_records = []
             for item in group.scored_samples:
                 if item.advantage is None:
                     raise RuntimeError("Online rollout scoring did not produce advantages.")
                 advantages.append(item.advantage)
                 correct.append(1.0 if item.score.answer_correct else 0.0)
                 quality_scores.append(item.score.quality_score)
+                group_records.append(
+                    {
+                        "sample_id": item.sample.sample_id,
+                        "final_answer": item.sample.final_answer,
+                        "answer_correct": item.score.answer_correct,
+                        "quality_score": item.score.quality_score,
+                        "mode_label": item.score.mode_label,
+                        "a_ans": item.advantage.a_ans,
+                        "a_qual": item.advantage.a_qual,
+                        "a_mode": item.advantage.a_mode,
+                        "a_total": item.advantage.a_total,
+                        "text_preview": item.sample.raw_text[:500],
+                    }
+                )
+            rollout_groups.append(
+                {
+                    "problem_id": group.problem.id,
+                    "source": group.problem.source,
+                    "gold_answer": group.problem.gold_answer,
+                    "correct_count": group_correct,
+                    "group_size": len(group.scored_samples),
+                    "samples": group_records,
+                }
+            )
+
+        a_total_values = [
+            self.config.lambda_ans * adv.a_ans
+            + self.config.lambda_qual * adv.a_qual
+            + self.config.lambda_mode * adv.a_mode
+            for adv in advantages
+        ]
+        diagnostics = {
+            "problem_ids": [group.problem.id for group in scored_groups],
+            "group_correct_counts": [group["correct_count"] for group in rollout_groups],
+            "group_sizes": [group["group_size"] for group in rollout_groups],
+            "response_tokens_mean": float(response_mask.sum(dim=-1).mean().item()),
+            "response_tokens_max": int(response_mask.sum(dim=-1).max().item()),
+            "nonzero_advantage_count": sum(1 for value in a_total_values if abs(value) > 1e-8),
+            "a_total_abs_mean": sum(abs(value) for value in a_total_values) / max(1, len(a_total_values)),
+            "groups": rollout_groups,
+        }
 
         return OnlineRolloutBatch(
             input_ids=input_ids,
@@ -847,6 +950,7 @@ class OnlineGRPOTrainer:
             correct=input_ids.new_tensor(correct, dtype=self.torch.float32),
             quality_score=input_ids.new_tensor(quality_scores, dtype=self.torch.float32),
             groups=scored_groups,
+            diagnostics=diagnostics,
         )
 
     def _update_from_rollout(self, rollout: OnlineRolloutBatch) -> dict[str, Any]:
