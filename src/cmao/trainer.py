@@ -703,7 +703,19 @@ class OnlineGRPOTrainer:
         history: list[dict[str, Any]] = []
         optimizer_step = 0
         problem_cursor = 0
-        for iteration in range(self.config.num_iterations):
+        iterations = range(self.config.num_iterations)
+        progress = (
+            tqdm(
+                iterations,
+                total=self.config.num_iterations,
+                desc="Online GRPO",
+                unit="iter",
+                disable=not self.accelerator.is_main_process,
+            )
+            if tqdm is not None
+            else iterations
+        )
+        for iteration in progress:
             selected = []
             for _ in range(self.config.rollout_batch_size):
                 selected.append(self.problems[problem_cursor % len(self.problems)])
@@ -767,20 +779,23 @@ class OnlineGRPOTrainer:
                     },
                 )
 
-            if (iteration + 1) % self.config.logging_steps == 0:
-                self.accelerator.print(
-                    "online_grpo",
-                    f"iter={iteration + 1}",
-                    f"loss={record['loss']:.4f}",
-                    f"kl={record['kl']:.4f}",
-                    f"clip={record['clip_fraction']:.3f}",
-                    f"correct={record['correct_count']}/{record['sample_count']}",
-                    f"adv_nonzero={record['nonzero_advantage_ratio']:.3f}",
-                    f"atok={record['response_tokens_mean']:.1f}",
-                    f"pid={','.join(record['problem_ids'])}",
+            if tqdm is not None and (iteration + 1) % self.config.logging_steps == 0:
+                progress.set_postfix(
+                    {
+                        "loss": f"{record['loss']:.4f}",
+                        "kl": f"{record['kl']:.4f}",
+                        "clip": f"{record['clip_fraction']:.3f}",
+                        "correct": f"{record['correct_count']}/{record['sample_count']}",
+                        "adv": f"{record['nonzero_advantage_ratio']:.3f}",
+                        "tok": f"{record['response_tokens_mean']:.1f}",
+                        "pid": ",".join(record["problem_ids"]),
+                    },
+                    refresh=False,
                 )
             if self.config.save_steps > 0 and optimizer_step > 0 and optimizer_step % self.config.save_steps == 0:
                 self._save_checkpoint(f"checkpoint-step-{optimizer_step}")
+        if tqdm is not None:
+            progress.close()
         return self._finalize(history, rollout_step=self.config.num_iterations, optimizer_step=optimizer_step)
 
     def _collect_rollout(self, problems, rollout_step: int) -> OnlineRolloutBatch:
