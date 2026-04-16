@@ -37,7 +37,10 @@ def cmao_clipped_policy_loss(
         raise RuntimeError("torch is required for CMAO training loss.") from exc
 
     log_ratio = current_logprobs - old_logprobs
-    ratio = torch.exp(log_ratio)
+    if response_mask is not None:
+        active_mask = response_mask.to(dtype=torch.bool, device=log_ratio.device)
+        log_ratio = torch.where(active_mask, log_ratio, torch.zeros_like(log_ratio))
+    ratio = torch.exp(log_ratio.clamp(min=-20.0, max=20.0))
     clipped_ratio = torch.clamp(ratio, 1.0 - clip_range, 1.0 + clip_range)
 
     objective_advantages = advantages

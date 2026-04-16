@@ -28,6 +28,7 @@
     "max_length": 2048,
     "clip_range": 0.2,
     "kl_coef": 0.02,
+    "max_grad_norm": 1.0,
     "bf16": true,
     "logging_steps": 1,
     "save_steps": 50,

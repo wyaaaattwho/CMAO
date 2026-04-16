@@ -51,6 +51,21 @@ class TrainingLossTest(unittest.TestCase):
         self.assertTrue(torch.allclose(loss, expected, atol=1e-5))
         self.assertEqual(breakdown.clip_fraction, 0.5)
 
+    def test_masked_prompt_tokens_cannot_create_nan_ratio(self) -> None:
+        current = torch.tensor([[1000.0, 0.0]], dtype=torch.float32)
+        old = torch.zeros_like(current)
+        advantages = torch.tensor([1.0], dtype=torch.float32)
+        response_mask = torch.tensor([[0.0, 1.0]], dtype=torch.float32)
+        loss, breakdown = cmao_clipped_policy_loss(
+            current_logprobs=current,
+            old_logprobs=old,
+            advantages=advantages,
+            response_mask=response_mask,
+            clip_range=0.2,
+        )
+        self.assertTrue(torch.isfinite(loss))
+        self.assertTrue(torch.isfinite(torch.tensor(breakdown.total_loss)))
+
 
 if __name__ == "__main__":
     unittest.main()

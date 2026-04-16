@@ -16,6 +16,7 @@ class OnlineGRPOConfigTest(unittest.TestCase):
                     "mini_batch_size": 3,
                     "num_iterations": 5,
                     "update_epochs": 2,
+                    "max_grad_norm": 0.7,
                 },
                 "cmao": {"lambda_ans": 1.0, "lambda_qual": 0.4, "lambda_mode": 0.1},
             }
@@ -27,6 +28,7 @@ class OnlineGRPOConfigTest(unittest.TestCase):
         self.assertEqual(config.mini_batch_size, 3)
         self.assertEqual(config.num_iterations, 5)
         self.assertEqual(config.update_epochs, 2)
+        self.assertAlmostEqual(config.max_grad_norm, 0.7)
         self.assertEqual(config.max_new_tokens, 128)
         self.assertAlmostEqual(config.lambda_qual, 0.4)
 

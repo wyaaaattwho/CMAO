@@ -35,6 +35,7 @@ class TrainingConfig:
     max_length: int = 2048
     clip_range: float = 0.2
     kl_coef: float = 0.02
+    max_grad_norm: float = 1.0
     bf16: bool = True
     logging_steps: int = 10
     save_steps: int = 200
@@ -75,6 +76,7 @@ class OnlineGRPOConfig:
     do_sample: bool = True
     clip_range: float = 0.2
     kl_coef: float = 0.02
+    max_grad_norm: float = 1.0
     bf16: bool = True
     logging_steps: int = 1
     save_steps: int = 50
@@ -110,6 +112,7 @@ def training_config_from_dict(config: dict[str, Any]) -> TrainingConfig:
         max_length=train_cfg.get("max_length", 2048),
         clip_range=train_cfg.get("clip_range", 0.2),
         kl_coef=train_cfg.get("kl_coef", 0.02),
+        max_grad_norm=train_cfg.get("max_grad_norm", 1.0),
         bf16=train_cfg.get("bf16", True),
         logging_steps=train_cfg.get("logging_steps", 10),
         save_steps=train_cfg.get("save_steps", 200),
@@ -158,6 +161,7 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         do_sample=sampling_cfg.get("do_sample", True),
         clip_range=train_cfg.get("clip_range", 0.2),
         kl_coef=train_cfg.get("kl_coef", 0.02),
+        max_grad_norm=train_cfg.get("max_grad_norm", 1.0),
         bf16=train_cfg.get("bf16", True),
         logging_steps=train_cfg.get("logging_steps", 1),
         save_steps=train_cfg.get("save_steps", 50),
@@ -281,7 +285,7 @@ def _sampled_token_kl(current_token_logprobs, reference_token_logprobs):
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("torch is required for CMAO training.") from exc
 
-    log_ratio_ref_current = reference_token_logprobs - current_token_logprobs
+    log_ratio_ref_current = (reference_token_logprobs - current_token_logprobs).clamp(min=-20.0, max=20.0)
     return torch.exp(log_ratio_ref_current) - log_ratio_ref_current - 1.0
 
 
@@ -486,6 +490,8 @@ class CMAOTrainer:
                 self.accelerator.backward(scaled_loss)
 
                 if batch_index % self.config.gradient_accumulation_steps == 0:
+                    if self.config.max_grad_norm and self.config.max_grad_norm > 0:
+                        self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     optimizer_step += 1
@@ -519,6 +525,8 @@ class CMAOTrainer:
                     self._save_checkpoint(f"checkpoint-step-{optimizer_step}")
                 if self.config.max_steps and global_step >= self.config.max_steps:
                     if batch_index % self.config.gradient_accumulation_steps != 0:
+                        if self.config.max_grad_norm and self.config.max_grad_norm > 0:
+                            self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                         self.optimizer.step()
                         self.optimizer.zero_grad()
                         optimizer_step += 1
@@ -526,6 +534,8 @@ class CMAOTrainer:
                         progress.close()
                     return self._finalize(history, global_step, optimizer_step)
             if batch_index % self.config.gradient_accumulation_steps != 0:
+                if self.config.max_grad_norm and self.config.max_grad_norm > 0:
+                    self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 optimizer_step += 1
@@ -745,6 +755,8 @@ class OnlineGRPOTrainer:
                     num_return_sequences=self.config.group_size,
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
+                    remove_invalid_values=True,
+                    renormalize_logits=True,
                 )
 
                 scored_samples: list[ScoredSample] = []
@@ -887,6 +899,9 @@ class OnlineGRPOTrainer:
                     kl_coef=self.config.kl_coef,
                 )
                 scaled_loss = loss / self.config.gradient_accumulation_steps
+                if not self.torch.isfinite(loss):
+                    self.optimizer.zero_grad()
+                    continue
                 self.accelerator.backward(scaled_loss)
                 backward_steps += 1
                 total_loss += breakdown.total_loss
@@ -895,11 +910,15 @@ class OnlineGRPOTrainer:
                 total_clip_fraction += breakdown.clip_fraction
 
                 if backward_steps % self.config.gradient_accumulation_steps == 0:
+                    if self.config.max_grad_norm and self.config.max_grad_norm > 0:
+                        self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     optimizer_steps += 1
 
         if backward_steps % self.config.gradient_accumulation_steps != 0:
+            if self.config.max_grad_norm and self.config.max_grad_norm > 0:
+                self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
             self.optimizer.step()
             self.optimizer.zero_grad()
             optimizer_steps += 1
