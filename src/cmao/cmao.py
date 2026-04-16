@@ -24,11 +24,13 @@ class CMAOComputer:
         lambda_ans: float = 1.0,
         lambda_qual: float = 1.0,
         lambda_mode: float = 1.0,
+        quality_pairwise_margin: float = 0.2,
         epsilon: float = 1e-8,
     ) -> None:
         self.lambda_ans = lambda_ans
         self.lambda_qual = lambda_qual
         self.lambda_mode = lambda_mode
+        self.quality_pairwise_margin = quality_pairwise_margin
         self.epsilon = epsilon
 
     def compute_group(self, group: ScoredGroup) -> ScoredGroup:
@@ -41,12 +43,19 @@ class CMAOComputer:
         a_ans = [(value - mean_ans) / std_ans for value in correctness]
 
         a_qual = [0.0 for _ in group.scored_samples]
-        if correct_indices:
-            correct_quality = [quality[idx] for idx in correct_indices]
-            mean_qual = _mean(correct_quality)
-            std_qual = _std(correct_quality, self.epsilon)
+        if len(correct_indices) >= 2:
+            denom = max(1, len(correct_indices) - 1)
             for idx in correct_indices:
-                a_qual[idx] = (quality[idx] - mean_qual) / std_qual
+                preference_sum = 0
+                for other_idx in correct_indices:
+                    if idx == other_idx:
+                        continue
+                    diff = quality[idx] - quality[other_idx]
+                    if diff > self.quality_pairwise_margin:
+                        preference_sum += 1
+                    elif diff < -self.quality_pairwise_margin:
+                        preference_sum -= 1
+                a_qual[idx] = max(-1.0, min(1.0, preference_sum / denom))
 
         mode_bonus = [0.0 for _ in group.scored_samples]
         if correct_indices:
@@ -81,4 +90,3 @@ class CMAOComputer:
                 )
             )
         return ScoredGroup(problem=group.problem, scored_samples=updated_samples, metadata=group.metadata)
-

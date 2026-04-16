@@ -13,7 +13,7 @@ from .io_utils import load_json, save_json
 from .mode_tagger import ModeTagger
 from .quality_scorer import QualityScorer
 from .reporter import build_report
-from .trainer import run_train_policy
+from .trainer import run_train_online_grpo, run_train_policy
 from .training_quality import TrainingQualityConfig
 from .training_data import flatten_training_records, save_training_records
 from .types import GroupedSamples, ScoredGroup, ScoredSample, ScoreBundle
@@ -140,6 +140,7 @@ def run_advantage(input_path: str, output_path: str, config_path: str | None = N
         lambda_ans=lambdas.get("ans", 1.0),
         lambda_qual=lambdas.get("qual", 1.0),
         lambda_mode=lambdas.get("mode", 1.0),
+        quality_pairwise_margin=config.get("quality_pairwise_margin", config.get("pairwise_margin", 0.2)),
     )
     groups = _load_scored_groups(input_path)
     advantaged = [computer.compute_group(group) for group in groups]
@@ -190,3 +191,7 @@ def run_prepare_train_data(input_path: str, output_path: str) -> dict[str, Any]:
 
 def run_train(config_path: str, training_path: str) -> dict[str, Any]:
     return run_train_policy(config_path=config_path, training_path=training_path)
+
+
+def run_train_online(config_path: str) -> dict[str, Any]:
+    return run_train_online_grpo(config_path=config_path)

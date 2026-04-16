@@ -12,6 +12,7 @@ from .pipeline import (
     run_sample,
     run_score,
     run_train,
+    run_train_online,
     save_report,
 )
 
@@ -56,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train_policy", help="Run CMAO LoRA policy training.")
     train.add_argument("--config", required=True)
     train.add_argument("--input", required=True)
+
+    online_train = subparsers.add_parser("train_online_grpo", help="Run online GRPO/CMAO policy training.")
+    online_train.add_argument("--config", required=True)
     return parser
 
 
@@ -95,6 +99,10 @@ def main() -> None:
     if args.command == "train_policy":
         summary = run_train(args.config, args.input)
         print(f"Saved training summary to {summary['output_dir']}/training_summary.json")
+        return
+    if args.command == "train_online_grpo":
+        summary = run_train_online(args.config)
+        print(f"Saved online GRPO summary to {summary['output_dir']}/training_summary.json")
         return
 
     parser.error(f"Unknown command: {args.command}")

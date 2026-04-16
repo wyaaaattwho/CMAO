@@ -306,11 +306,21 @@ python scripts/train_policy.py \
   --input outputs/train/gsm8k_train_records.jsonl
 ```
 
+在线 GRPO 训练命令：
+
+```bash
+python scripts/train_online_grpo.py \
+  --config configs/training/gsm8k_online_grpo_lora.json
+```
+
+`train_policy` 使用已经保存好的离线样本做回放式更新；`train_online_grpo` 会在训练循环里用当前 policy 采样 grouped completions，立即冻结这批 completion 的 old token logprobs，然后用 `current / old` 做 clipped GRPO ratio，并用单独的 reference model 做 KL 约束。
+
 统一 CLI 也支持：
 
 ```bash
 cmao prepare_train_data --input outputs/gsm8k_advantages.json --output outputs/train/gsm8k_train_records.jsonl
 cmao train_policy --config configs/training/gsm8k_cmao_lora.json --input outputs/train/gsm8k_train_records.jsonl
+cmao train_online_grpo --config configs/training/gsm8k_online_grpo_lora.json
 ```
 
 默认提供两份训练配置：

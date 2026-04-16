@@ -45,14 +45,14 @@ class CMAOComputerTest(unittest.TestCase):
         group = ScoredGroup(
             problem=self.problem,
             scored_samples=[
-                self._sample("s1", True, 0.9, "equation_manipulation"),
-                self._sample("s2", True, 0.6, "equation_manipulation"),
-                self._sample("s3", True, 0.7, "case_split"),
+                self._sample("s1", True, 0.90, "equation_manipulation"),
+                self._sample("s2", True, 0.55, "equation_manipulation"),
+                self._sample("s3", True, 0.72, "case_split"),
             ],
         )
         updated = CMAOComputer().compute_group(group)
         qual_values = [item.advantage.a_qual for item in updated.scored_samples]
-        self.assertTrue(any(abs(value) > 1e-6 for value in qual_values))
+        self.assertEqual(qual_values, [0.5, -0.5, 0.0])
 
     def test_incorrect_samples_get_zero_quality_advantage(self) -> None:
         group = ScoredGroup(

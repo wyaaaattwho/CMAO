@@ -35,6 +35,22 @@ class TrainingLossTest(unittest.TestCase):
         self.assertEqual(loss.ndim, 0)
         self.assertGreaterEqual(breakdown.kl_term, 0.0)
 
+    def test_clipped_policy_loss_is_masked_per_completion_token(self) -> None:
+        current = torch.tensor([[10.0, 0.2, 0.1]], dtype=torch.float32)
+        old = torch.zeros_like(current)
+        advantages = torch.tensor([1.0], dtype=torch.float32)
+        response_mask = torch.tensor([[0.0, 1.0, 1.0]], dtype=torch.float32)
+        loss, breakdown = cmao_clipped_policy_loss(
+            current_logprobs=current,
+            old_logprobs=old,
+            advantages=advantages,
+            response_mask=response_mask,
+            clip_range=0.2,
+        )
+        expected = -torch.tensor([(1.2 + torch.exp(torch.tensor(0.1))) / 2.0])
+        self.assertTrue(torch.allclose(loss, expected, atol=1e-5))
+        self.assertEqual(breakdown.clip_fraction, 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()

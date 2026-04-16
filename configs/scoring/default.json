@@ -11,6 +11,6 @@
     "ans": 1.0,
     "qual": 1.0,
     "mode": 1.0
-  }
+  },
+  "quality_pairwise_margin": 0.2
 }
-
