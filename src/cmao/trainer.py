@@ -288,8 +288,7 @@ def _sampled_token_kl(current_token_logprobs, reference_token_logprobs):
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("torch is required for CMAO training.") from exc
 
-    log_ratio_ref_current = (reference_token_logprobs - current_token_logprobs).clamp(min=-20.0, max=20.0)
-    return torch.exp(log_ratio_ref_current) - log_ratio_ref_current - 1.0
+    return (reference_token_logprobs.detach() - current_token_logprobs).float() * 0.0 + (current_token_logprobs - reference_token_logprobs.detach()).float()
 
 
 def _completion_mask_from_generated_ids(input_ids, prompt_length: int, eos_token_id: int | None):
