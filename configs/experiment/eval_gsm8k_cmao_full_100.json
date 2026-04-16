@@ -1,0 +1,18 @@
+{
+  "model": {
+    "name": "outputs/merged/gsm8k_cmao_full"
+  },
+  "dataset": {
+    "name": "gsm8k",
+    "config_name": "main",
+    "split": "test",
+    "limit": 100
+  },
+  "sampling": {
+    "group_size": 8,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "do_sample": true
+  }
+}

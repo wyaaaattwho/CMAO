@@ -1,0 +1,16 @@
+{
+  "model": {
+    "name": "Qwen/Qwen2.5-Math-1.5B-Instruct"
+  },
+  "dataset": {
+    "name": "math-500",
+    "split": "test"
+  },
+  "sampling": {
+    "group_size": 8,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_new_tokens": 2048,
+    "do_sample": true
+  }
+}
