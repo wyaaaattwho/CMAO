@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,7 @@ from .quality_scorer import QualityScorer
 from .train_types import PolicyTrainingRecord
 from .training_data import load_training_records
 from .training_loss import build_total_advantage, cmao_clipped_policy_loss
-from .types import ReasoningSample, ScoreBundle, ScoredGroup, ScoredSample
+from .types import AdvantageBundle, ReasoningSample, ScoreBundle, ScoredGroup, ScoredSample
 
 try:
     from tqdm.auto import tqdm
@@ -74,6 +75,8 @@ class OnlineGRPOConfig:
     max_length: int = 2048
     temperature: float = 0.7
     top_p: float = 0.95
+    repetition_penalty: float = 1.05
+    no_repeat_ngram_size: int = 3
     do_sample: bool = True
     clip_range: float = 0.2
     kl_coef: float = 0.02
@@ -86,6 +89,9 @@ class OnlineGRPOConfig:
     lambda_ans: float = 1.0
     lambda_qual: float = 0.5
     lambda_mode: float = 0.1
+    quality_correct_only: bool = True
+    adv_component_clip: float = 2.0
+    adv_total_clip: float = 5.0
     quality_pairwise_margin: float = 0.2
     concise_token_cap: int = 320
     quality_weights: dict[str, float] | None = None
@@ -95,6 +101,7 @@ class OnlineGRPOConfig:
     lora_dropout: float = 0.05
     lora_target_modules: list[str] | None = None
     save_rollout_log: bool = True
+    max_bad_iterations: int = 0
 
 
 def training_config_from_dict(config: dict[str, Any]) -> TrainingConfig:
@@ -160,6 +167,8 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         max_length=train_cfg.get("max_length", 2048),
         temperature=sampling_cfg.get("temperature", 0.7),
         top_p=sampling_cfg.get("top_p", 0.95),
+        repetition_penalty=sampling_cfg.get("repetition_penalty", 1.05),
+        no_repeat_ngram_size=sampling_cfg.get("no_repeat_ngram_size", 3),
         do_sample=sampling_cfg.get("do_sample", True),
         clip_range=train_cfg.get("clip_range", 0.2),
         kl_coef=train_cfg.get("kl_coef", 0.02),
@@ -167,11 +176,15 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         bf16=train_cfg.get("bf16", True),
         logging_steps=train_cfg.get("logging_steps", 1),
         save_steps=train_cfg.get("save_steps", 50),
+        max_bad_iterations=train_cfg.get("max_bad_iterations", 0),
         seed=train_cfg.get("seed", 42),
         trust_remote_code=model_cfg.get("trust_remote_code", True),
         lambda_ans=cmao_cfg.get("lambda_ans", 1.0),
         lambda_qual=cmao_cfg.get("lambda_qual", 0.5),
         lambda_mode=cmao_cfg.get("lambda_mode", 0.1),
+        quality_correct_only=cmao_cfg.get("quality_correct_only", True),
+        adv_component_clip=cmao_cfg.get("adv_component_clip", 2.0),
+        adv_total_clip=cmao_cfg.get("adv_total_clip", 5.0),
         quality_pairwise_margin=cmao_cfg.get(
             "quality_pairwise_margin",
             scoring_cfg.get("quality_pairwise_margin", 0.2),
@@ -258,7 +271,6 @@ class CMAOCollator:
 def _forward_response_stats(model, input_ids, attention_mask, prompt_lengths):
     try:
         import torch
-        import torch.nn.functional as F
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("torch is required for CMAO training.") from exc
 
@@ -267,8 +279,10 @@ def _forward_response_stats(model, input_ids, attention_mask, prompt_lengths):
     targets = input_ids[:, 1:]
     target_mask = attention_mask[:, 1:].float()
 
-    full_log_probs = F.log_softmax(logits, dim=-1)
-    token_logprobs = full_log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    # Compute sampled-token logprobs without materializing full log_softmax(logits)
+    # to reduce peak memory at large vocab sizes.
+    selected_logits = logits.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    token_logprobs = selected_logits - logits.logsumexp(dim=-1)
     response_masks = []
     for index in range(input_ids.shape[0]):
         response_start = max(prompt_lengths[index] - 1, 0)
@@ -288,7 +302,8 @@ def _sampled_token_kl(current_token_logprobs, reference_token_logprobs):
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("torch is required for CMAO training.") from exc
 
-    return (reference_token_logprobs.detach() - current_token_logprobs).float() * 0.0 + (current_token_logprobs - reference_token_logprobs.detach()).float()
+    log_ratio = current_token_logprobs - reference_token_logprobs.detach()
+    return 0.5 * (log_ratio.float() ** 2)
 
 
 def _completion_mask_from_generated_ids(input_ids, prompt_length: int, eos_token_id: int | None):
@@ -345,6 +360,7 @@ class OnlineRolloutBatch:
     a_ans: Any
     a_qual: Any
     a_mode: Any
+    a_total: Any
     correct: Any
     quality_score: Any
     groups: list[ScoredGroup]
@@ -385,7 +401,8 @@ class CMAOTrainer:
             )
         self.dataset = PolicyTrainingDataset(self.records)
         self.accelerator = Accelerator(mixed_precision="bf16" if config.bf16 else "no")
-        self.set_seed(config.seed)
+        # Use rank-specific seeds so multi-process rollout generation is not duplicated.
+        self.set_seed(config.seed + int(self.accelerator.process_index))
 
         self.tokenizer = self.AutoTokenizer.from_pretrained(
             config.model_name,
@@ -654,7 +671,7 @@ class OnlineGRPOTrainer:
             concise_token_cap=config.concise_token_cap,
         )
         self.mode_tagger = ModeTagger()
-        self.advantage_computer = CMAOComputer(
+        self.cmao_computer = CMAOComputer(
             lambda_ans=config.lambda_ans,
             lambda_qual=config.lambda_qual,
             lambda_mode=config.lambda_mode,
@@ -663,6 +680,13 @@ class OnlineGRPOTrainer:
         self.output_dir = Path(config.output_dir)
         self.metrics_path = self.output_dir / "online_metrics.jsonl"
         self.rollout_log_path = self.output_dir / "online_rollouts.jsonl"
+
+    def _clip_advantage_value(self, value: float, clip_value: float) -> float:
+        if not math.isfinite(value):
+            return 0.0
+        if clip_value <= 0:
+            return value
+        return max(-clip_value, min(clip_value, value))
 
     def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         if not self.accelerator.is_main_process:
@@ -698,10 +722,26 @@ class OnlineGRPOTrainer:
             trust_remote_code=self.config.trust_remote_code,
         )
 
+    def _has_nonfinite_gradients(self) -> bool:
+        for parameter in self.model.parameters():
+            if not parameter.requires_grad or parameter.grad is None:
+                continue
+            if not self.torch.isfinite(parameter.grad).all():
+                return True
+        return False
+
+    def _has_nonfinite_parameters(self) -> bool:
+        for parameter in self.model.parameters():
+            if not self.torch.isfinite(parameter).all():
+                return True
+        return False
+
     def train(self) -> dict[str, Any]:
         history: list[dict[str, Any]] = []
         optimizer_step = 0
-        problem_cursor = 0
+        per_rank_stride = max(1, int(self.config.rollout_batch_size) * int(self.accelerator.num_processes))
+        problem_cursor = int(self.accelerator.process_index) * int(self.config.rollout_batch_size)
+        bad_iteration_streak = 0
         iterations = range(self.config.num_iterations)
         progress = (
             tqdm(
@@ -715,10 +755,16 @@ class OnlineGRPOTrainer:
             else iterations
         )
         for iteration in progress:
-            selected = []
-            for _ in range(self.config.rollout_batch_size):
-                selected.append(self.problems[problem_cursor % len(self.problems)])
-                problem_cursor += 1
+            if self._has_nonfinite_parameters():
+                raise RuntimeError(
+                    "Detected non-finite model parameters before rollout. "
+                    "Stopping online GRPO to prevent unrecoverable collapse."
+                )
+            selected = [
+                self.problems[(problem_cursor + offset) % len(self.problems)]
+                for offset in range(self.config.rollout_batch_size)
+            ]
+            problem_cursor += per_rank_stride
             rollout = self._collect_rollout(selected, rollout_step=iteration)
             update_summary = self._update_from_rollout(rollout)
             optimizer_step += update_summary["optimizer_steps"]
@@ -733,41 +779,27 @@ class OnlineGRPOTrainer:
                 "a_ans_mean": float(rollout.a_ans.mean().item()),
                 "a_qual_mean": float(rollout.a_qual.mean().item()),
                 "a_mode_mean": float(rollout.a_mode.mean().item()),
-                "a_total_abs_mean": float(
-                    build_total_advantage(
-                        rollout.a_ans,
-                        rollout.a_qual,
-                        rollout.a_mode,
-                        lambda_ans=self.config.lambda_ans,
-                        lambda_qual=self.config.lambda_qual,
-                        lambda_mode=self.config.lambda_mode,
-                    )
-                    .abs()
-                    .mean()
-                    .item()
-                ),
-                "nonzero_advantage_ratio": float(
-                    (
-                        build_total_advantage(
-                            rollout.a_ans,
-                            rollout.a_qual,
-                            rollout.a_mode,
-                            lambda_ans=self.config.lambda_ans,
-                            lambda_qual=self.config.lambda_qual,
-                            lambda_mode=self.config.lambda_mode,
-                        ).abs()
-                        > 1e-8
-                    )
-                    .float()
-                    .mean()
-                    .item()
-                ),
+                "a_total_abs_mean": float(rollout.a_total.abs().mean().item()),
+                "nonzero_advantage_ratio": float((rollout.a_total.abs() > 1e-8).float().mean().item()),
                 "response_tokens_mean": rollout.diagnostics["response_tokens_mean"],
                 "problem_ids": rollout.diagnostics["problem_ids"],
                 **update_summary,
             }
             history.append(record)
             self._append_jsonl(self.metrics_path, record)
+
+            looks_collapsed = (
+                record["correct_count"] == 0
+                and record["response_tokens_mean"] >= float(self.config.max_new_tokens - 1)
+            )
+            bad_iteration_streak = bad_iteration_streak + 1 if looks_collapsed else 0
+            if self.config.max_bad_iterations > 0 and bad_iteration_streak >= self.config.max_bad_iterations:
+                if tqdm is not None:
+                    progress.write(
+                        "[online-grpo] Early stop: detected consecutive collapsed rollouts "
+                        f"({bad_iteration_streak}) with max-length generations and zero correct answers."
+                    )
+                break
             if self.config.save_rollout_log:
                 self._append_jsonl(
                     self.rollout_log_path,
@@ -809,7 +841,11 @@ class OnlineGRPOTrainer:
 
         with self.torch.no_grad():
             for problem in problems:
-                prefix_text = problem.prompt.rstrip() + "\n"
+                prefix_text = (
+                    problem.prompt.rstrip()
+                    + "\n\nSolve carefully and end with exactly one line in this format:\n"
+                    + "Final Answer: <number>\n"
+                )
                 encoded = self.tokenizer(
                     prefix_text,
                     return_tensors="pt",
@@ -825,6 +861,8 @@ class OnlineGRPOTrainer:
                     do_sample=self.config.do_sample,
                     temperature=self.config.temperature,
                     top_p=self.config.top_p,
+                    repetition_penalty=self.config.repetition_penalty,
+                    no_repeat_ngram_size=self.config.no_repeat_ngram_size,
                     num_return_sequences=self.config.group_size,
                     pad_token_id=pad_token_id,
                     eos_token_id=eos_token_id,
@@ -847,6 +885,14 @@ class OnlineGRPOTrainer:
                     completion_ids = output_ids[prompt_length:completion_end]
                     raw_text = self.tokenizer.decode(completion_ids, skip_special_tokens=True)
                     final_answer = extract_final_answer(raw_text)
+                    generated_tokens = max(active_length - prompt_length, 0)
+                    ended_with_eos = bool(
+                        eos_token_id is not None
+                        and active_length > prompt_length
+                        and int(output_ids[active_length - 1].item()) == int(eos_token_id)
+                    )
+                    hit_length_limit = generated_tokens >= self.config.max_new_tokens
+                    is_truncated = bool(hit_length_limit and not ended_with_eos)
                     sample = ReasoningSample(
                         problem_id=problem.id,
                         sample_id=f"{problem.id}-online-{rollout_step}-{sample_index}",
@@ -858,13 +904,30 @@ class OnlineGRPOTrainer:
                             "temperature": self.config.temperature,
                             "top_p": self.config.top_p,
                             "max_new_tokens": self.config.max_new_tokens,
+                            "generated_tokens": generated_tokens,
+                            "ended_with_eos": ended_with_eos,
+                            "truncated": is_truncated,
                             "rollout_step": rollout_step,
                         },
                     )
                     answer_info = self.answer_judge.evaluate(problem, sample)
                     sample.final_answer = answer_info["predicted_answer"]
-                    quality_score, subscores, quality_evidence = self.quality_scorer.score(problem, sample)
+                    raw_quality_score, subscores, quality_evidence = self.quality_scorer.score(problem, sample)
+                    quality_score = raw_quality_score
+                    if self.config.quality_correct_only and not answer_info["answer_correct"]:
+                        quality_score = 0.0
                     mode_label, mode_evidence = self.mode_tagger.tag_with_evidence(problem, sample)
+                    quality_evidence = dict(quality_evidence)
+                    quality_evidence.update(
+                        {
+                            "raw_quality_score": raw_quality_score,
+                            "quality_correct_only": self.config.quality_correct_only,
+                            "quality_zeroed_for_incorrect": bool(
+                                self.config.quality_correct_only and not answer_info["answer_correct"]
+                            ),
+                            "truncated": is_truncated,
+                        }
+                    )
                     scored_samples.append(
                         ScoredSample(
                             sample=sample,
@@ -885,7 +948,40 @@ class OnlineGRPOTrainer:
                     response_masks.append(response_mask[: max(active_length - 1, 0)])
 
                 scored_group = ScoredGroup(problem=problem, scored_samples=scored_samples)
-                scored_groups.append(self.advantage_computer.compute_group(scored_group))
+                advantaged_group = self.cmao_computer.compute_group(scored_group)
+                stable_samples: list[ScoredSample] = []
+                for item in advantaged_group.scored_samples:
+                    if item.advantage is None:
+                        raise RuntimeError("Online rollout scoring did not produce advantages.")
+                    clipped_advantage = AdvantageBundle(
+                        a_ans=self._clip_advantage_value(item.advantage.a_ans, 1.0),
+                        a_qual=self._clip_advantage_value(
+                            item.advantage.a_qual,
+                            self.config.adv_component_clip,
+                        ),
+                        a_mode=self._clip_advantage_value(
+                            item.advantage.a_mode,
+                            self.config.adv_component_clip,
+                        ),
+                        a_total=self._clip_advantage_value(
+                            item.advantage.a_total,
+                            self.config.adv_total_clip,
+                        ),
+                    )
+                    stable_samples.append(
+                        ScoredSample(
+                            sample=item.sample,
+                            score=item.score,
+                            advantage=clipped_advantage,
+                        )
+                    )
+                scored_groups.append(
+                    ScoredGroup(
+                        problem=advantaged_group.problem,
+                        scored_samples=stable_samples,
+                        metadata=advantaged_group.metadata,
+                    )
+                )
 
             input_ids = _pad_1d_tensors(input_sequences, pad_token_id)
             attention_mask = _pad_1d_tensors(attention_masks, 0)
@@ -936,12 +1032,7 @@ class OnlineGRPOTrainer:
                 }
             )
 
-        a_total_values = [
-            self.config.lambda_ans * adv.a_ans
-            + self.config.lambda_qual * adv.a_qual
-            + self.config.lambda_mode * adv.a_mode
-            for adv in advantages
-        ]
+        a_total_values = [adv.a_total for adv in advantages]
         diagnostics = {
             "problem_ids": [group.problem.id for group in scored_groups],
             "group_correct_counts": [group["correct_count"] for group in rollout_groups],
@@ -961,6 +1052,7 @@ class OnlineGRPOTrainer:
             a_ans=input_ids.new_tensor([adv.a_ans for adv in advantages], dtype=self.torch.float32),
             a_qual=input_ids.new_tensor([adv.a_qual for adv in advantages], dtype=self.torch.float32),
             a_mode=input_ids.new_tensor([adv.a_mode for adv in advantages], dtype=self.torch.float32),
+            a_total=input_ids.new_tensor([adv.a_total for adv in advantages], dtype=self.torch.float32),
             correct=input_ids.new_tensor(correct, dtype=self.torch.float32),
             quality_score=input_ids.new_tensor(quality_scores, dtype=self.torch.float32),
             groups=scored_groups,
@@ -995,14 +1087,7 @@ class OnlineGRPOTrainer:
                         rollout.attention_mask[indices],
                         prompt_lengths=[0 for _ in range(int(indices.shape[0]))],
                     )
-                advantages = build_total_advantage(
-                    rollout.a_ans[indices],
-                    rollout.a_qual[indices],
-                    rollout.a_mode[indices],
-                    lambda_ans=self.config.lambda_ans,
-                    lambda_qual=self.config.lambda_qual,
-                    lambda_mode=self.config.lambda_mode,
-                )
+                advantages = rollout.a_total[indices]
                 kl_values = _sampled_token_kl(
                     current_token_logprobs=current_stats["token_logprobs"],
                     reference_token_logprobs=reference_stats["token_logprobs"],
@@ -1028,16 +1113,39 @@ class OnlineGRPOTrainer:
                 total_clip_fraction += breakdown.clip_fraction
 
                 if backward_steps % self.config.gradient_accumulation_steps == 0:
+                    if self._has_nonfinite_gradients():
+                        self.optimizer.zero_grad()
+                        continue
                     if self.config.max_grad_norm and self.config.max_grad_norm > 0:
                         self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
                     self.optimizer.step()
+                    if self._has_nonfinite_parameters():
+                        raise RuntimeError(
+                            "Detected non-finite model parameters after optimizer step. "
+                            "Stopping online GRPO to prevent collapse."
+                        )
                     self.optimizer.zero_grad()
                     optimizer_steps += 1
 
         if backward_steps % self.config.gradient_accumulation_steps != 0:
+            if self._has_nonfinite_gradients():
+                self.optimizer.zero_grad()
+                return {
+                    "loss": 0.0,
+                    "policy_loss": 0.0,
+                    "kl": 0.0,
+                    "clip_fraction": 0.0,
+                    "backward_steps": 0,
+                    "optimizer_steps": 0,
+                }
             if self.config.max_grad_norm and self.config.max_grad_norm > 0:
                 self.accelerator.clip_grad_norm_(self.model.parameters(), self.config.max_grad_norm)
             self.optimizer.step()
+            if self._has_nonfinite_parameters():
+                raise RuntimeError(
+                    "Detected non-finite model parameters after optimizer step. "
+                    "Stopping online GRPO to prevent collapse."
+                )
             self.optimizer.zero_grad()
             optimizer_steps += 1
 

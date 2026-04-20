@@ -34,58 +34,67 @@ class CMAOComputer:
         self.epsilon = epsilon
 
     def compute_group(self, group: ScoredGroup) -> ScoredGroup:
+        if not group.scored_samples:
+            return group
+
         correctness = [1.0 if item.score.answer_correct else 0.0 for item in group.scored_samples]
-        quality = [item.score.quality_score for item in group.scored_samples]
+        quality_raw = [
+            item.score.quality_score if math.isfinite(item.score.quality_score) else 0.0
+            for item in group.scored_samples
+        ]
+        quality_signal = [0.0 for _ in group.scored_samples]
+
         correct_indices = [idx for idx, value in enumerate(correctness) if value > 0.0]
-
-        mean_ans = _mean(correctness)
-        std_ans = _std(correctness, self.epsilon)
-        a_ans = [(value - mean_ans) / std_ans for value in correctness]
-
-        a_qual = [0.0 for _ in group.scored_samples]
         if len(correct_indices) >= 2:
-            denom = max(1, len(correct_indices) - 1)
-            for idx in correct_indices:
-                preference_sum = 0
-                for other_idx in correct_indices:
-                    if idx == other_idx:
-                        continue
-                    diff = quality[idx] - quality[other_idx]
-                    if diff > self.quality_pairwise_margin:
-                        preference_sum += 1
-                    elif diff < -self.quality_pairwise_margin:
-                        preference_sum -= 1
-                a_qual[idx] = max(-1.0, min(1.0, preference_sum / denom))
+            for offset, left_index in enumerate(correct_indices):
+                for right_index in correct_indices[offset + 1 :]:
+                    left_quality = quality_raw[left_index]
+                    right_quality = quality_raw[right_index]
+                    if left_quality - right_quality > self.quality_pairwise_margin:
+                        quality_signal[left_index] += 1.0
+                        quality_signal[right_index] -= 1.0
+                    elif right_quality - left_quality > self.quality_pairwise_margin:
+                        quality_signal[left_index] -= 1.0
+                        quality_signal[right_index] += 1.0
+            scale = float(max(1, len(correct_indices) - 1))
+            quality_signal = [value / scale for value in quality_signal]
 
         mode_bonus = [0.0 for _ in group.scored_samples]
         if correct_indices:
-            counts = Counter(group.scored_samples[idx].score.mode_label for idx in correct_indices)
+            mode_labels = [str(group.scored_samples[idx].score.mode_label) for idx in correct_indices]
+            counts = Counter(mode_labels)
             total = len(correct_indices)
             for idx in correct_indices:
-                mode = group.scored_samples[idx].score.mode_label
+                mode = str(group.scored_samples[idx].score.mode_label)
                 mode_probability = counts[mode] / total
-                mode_bonus[idx] = quality[idx] * (-math.log(mode_probability))
+                safe_probability = max(mode_probability, self.epsilon)
+                mode_bonus[idx] = quality_raw[idx] * (-math.log(safe_probability))
 
-        mean_mode = _mean(mode_bonus)
-        std_mode = _std(mode_bonus, self.epsilon)
-        a_mode = [(value - mean_mode) / std_mode if std_mode > 0 else 0.0 for value in mode_bonus]
+        # GRPO style: combine scalar rewards first, then normalize once per group.
+        total_rewards = []
+        for idx in range(len(group.scored_samples)):
+            reward = (
+                self.lambda_ans * correctness[idx]
+                + self.lambda_qual * quality_signal[idx]
+                + self.lambda_mode * mode_bonus[idx]
+            )
+            total_rewards.append(reward if math.isfinite(reward) else 0.0)
+
+        mean_r = _mean(total_rewards)
+        std_r = _std(total_rewards, self.epsilon)
 
         updated_samples: list[ScoredSample] = []
         for idx, item in enumerate(group.scored_samples):
-            total_advantage = (
-                self.lambda_ans * a_ans[idx]
-                + self.lambda_qual * a_qual[idx]
-                + self.lambda_mode * a_mode[idx]
-            )
+            a_total = (total_rewards[idx] - mean_r) / std_r if std_r > 0.0 else 0.0
             updated_samples.append(
                 ScoredSample(
                     sample=item.sample,
                     score=item.score,
                     advantage=AdvantageBundle(
-                        a_ans=a_ans[idx],
-                        a_qual=a_qual[idx],
-                        a_mode=a_mode[idx],
-                        a_total=total_advantage,
+                        a_ans=correctness[idx],
+                        a_qual=quality_signal[idx],
+                        a_mode=mode_bonus[idx],
+                        a_total=a_total,
                     ),
                 )
             )

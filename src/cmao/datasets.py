@@ -26,14 +26,58 @@ def _pick_first(record: dict[str, Any], candidates: tuple[str, ...], default: st
 
 
 def _record_to_problem(source: str, index: int, record: dict[str, Any]) -> ProblemRecord:
-    prompt = _pick_first(record, ("prompt", "problem", "question", "input"))
-    gold = _pick_first(record, ("gold_answer", "answer", "solution", "final_answer", "target"))
+    prompt = _pick_first(
+        record,
+        (
+            "prompt",
+            "problem",
+            "question",
+            "input",
+            "instruction",
+            "query",
+            "Question",
+            "Problem",
+        ),
+    )
+    gold = _pick_first(
+        record,
+        (
+            "gold_answer",
+            "answer",
+            "solution",
+            "final_answer",
+            "target",
+            "expected_answer",
+            "reference_answer",
+            "Answer",
+            "Final Answer",
+        ),
+    )
     if source == "gsm8k":
         gold = extract_gold_answer_from_gsm8k(gold)
     metadata = {
         key: value
         for key, value in record.items()
-        if key not in {"prompt", "problem", "question", "input", "gold_answer", "answer", "solution", "final_answer", "target"}
+        if key
+        not in {
+            "prompt",
+            "problem",
+            "question",
+            "input",
+            "instruction",
+            "query",
+            "Question",
+            "Problem",
+            "gold_answer",
+            "answer",
+            "solution",
+            "final_answer",
+            "target",
+            "expected_answer",
+            "reference_answer",
+            "Answer",
+            "Final Answer",
+        }
     }
     return ProblemRecord(
         id=str(record.get("id", f"{source}-{index}")),
@@ -75,14 +119,14 @@ def load_hf_problems(
     limit: int | None = None,
     config_name: str | None = None,
 ) -> list[ProblemRecord]:
-    if dataset_name not in HF_DATASETS:
-        raise ValueError(f"Unsupported dataset: {dataset_name}")
     try:
         from datasets import load_dataset  # type: ignore
     except ImportError as exc:
         raise RuntimeError("datasets is required for Hugging Face dataset loading.") from exc
 
-    spec = HF_DATASETS[dataset_name]
+    # Support both predefined aliases (e.g. "gsm8k") and raw HF dataset ids
+    # (e.g. "Maxwell-Jia/AIME_2024") without code changes.
+    spec = HF_DATASETS.get(dataset_name, {"path": dataset_name, "default_split": "train"})
     dataset = load_dataset(
         spec["path"],
         config_name or spec.get("config_name"),

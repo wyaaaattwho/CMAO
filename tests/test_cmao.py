@@ -91,6 +91,25 @@ class CMAOComputerTest(unittest.TestCase):
         self.assertIn("nonempty_incorrect_rate", report)
         self.assertGreater(report["placeholder_extraction_rate"], 0.0)
 
+    def test_report_contains_pass_at_k_metrics(self) -> None:
+        group = ScoredGroup(
+            problem=self.problem,
+            scored_samples=[
+                self._sample("s1", False, 0.9, "equation_manipulation"),
+                self._sample("s2", True, 0.6, "case_split"),
+                self._sample("s3", False, 0.4, "other_math"),
+            ],
+        )
+        report = build_report([CMAOComputer().compute_group(group)])
+        self.assertIn("pass_at_k", report)
+        self.assertIn("per_subset_pass_at_k", report)
+        self.assertEqual(report["pass_at_k"]["1"]["correct"], 0)
+        self.assertEqual(report["pass_at_k"]["2"]["correct"], 1)
+        self.assertEqual(
+            report["per_subset_pass_at_k"]["partially_correct"]["2"]["pass_rate"],
+            1.0,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 from pathlib import Path
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -83,6 +84,21 @@ class QualityScorerTest(unittest.TestCase):
     def test_safe_symbolic_guard_accepts_short_expressions(self) -> None:
         self.assertTrue(self.scorer._is_safe_symbolic_pair("x + 1", "2"))
         self.assertFalse(self.scorer._is_safe_symbolic_pair("[" * 90, "2"))
+
+    def test_local_check_ignores_segment_exception(self) -> None:
+        sample = ReasoningSample(
+            problem_id="p1",
+            sample_id="s6",
+            cot_text="x + 1 = x + 1\nFinal Answer: 5",
+            final_answer="5",
+            raw_text="x + 1 = x + 1\nFinal Answer: 5",
+        )
+        with patch("cmao.quality_scorer.answers_equivalent", side_effect=RuntimeError("boom")):
+            score, subscores, evidence = self.scorer.score(self.problem, sample)
+        self.assertGreaterEqual(score, 0.0)
+        self.assertIn("local_check", subscores)
+        local = evidence["subscore_evidence"]["local_check"]
+        self.assertEqual(local["ignored_errors"], 1)
 
 
 if __name__ == "__main__":

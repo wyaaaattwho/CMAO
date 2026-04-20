@@ -106,3 +106,7 @@ def main() -> None:
         return
 
     parser.error(f"Unknown command: {args.command}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,11 +1,10 @@
 {
   "model": {
-    "name": "outputs/merged/gsm8k_online_grpo_lora"
+    "name": "outputs/merged/math500_online_cmao_1.5b_lora"
   },
   "dataset": {
-    "name": "gsm8k",
-    "config_name": "main",
-    "split": "test",
+    "name": "Maxwell-Jia/AIME_2024",
+    "split": "train",
     "limit": 100
   },
   "sampling": {

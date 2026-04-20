@@ -88,6 +88,7 @@ class QualityScorer:
     def _local_check_score(self, cot_text: str) -> tuple[float, dict[str, object]]:
         equations = []
         checked_lines: list[dict[str, object]] = []
+        ignored_errors = 0
         for line in cot_text.splitlines():
             cleaned = line.strip()
             if cleaned.count("=") < 1:
@@ -97,24 +98,35 @@ class QualityScorer:
                 continue
             segment_validities = []
             for left, right in zip(segments, segments[1:]):
-                left_value = try_parse_numeric_value(left)
-                right_value = try_parse_numeric_value(right)
-                if left_value is not None and right_value is not None:
-                    is_valid = abs(left_value - right_value) < 1e-6
-                    equations.append(is_valid)
-                    segment_validities.append({"left": left, "right": right, "valid": is_valid})
+                try:
+                    left_value = try_parse_numeric_value(left)
+                    right_value = try_parse_numeric_value(right)
+                    if left_value is not None and right_value is not None:
+                        is_valid = abs(left_value - right_value) < 1e-6
+                        equations.append(is_valid)
+                        segment_validities.append({"left": left, "right": right, "valid": is_valid})
+                        continue
+                    if self._is_safe_symbolic_pair(left, right) and answers_equivalent(left, right):
+                        equations.append(True)
+                        segment_validities.append({"left": left, "right": right, "valid": True})
+                except Exception:
+                    # Keep scoring resilient to malformed expressions in individual segments.
+                    ignored_errors += 1
                     continue
-                if self._is_safe_symbolic_pair(left, right) and answers_equivalent(left, right):
-                    equations.append(True)
-                    segment_validities.append({"left": left, "right": right, "valid": True})
             if segment_validities:
                 checked_lines.append({"line": cleaned, "segments": segment_validities})
         if not equations:
-            return 0.5, {"checked_equations": 0, "valid_equations": 0, "lines": []}
+            return 0.5, {
+                "checked_equations": 0,
+                "valid_equations": 0,
+                "ignored_errors": ignored_errors,
+                "lines": [],
+            }
         score = sum(1.0 for item in equations if item) / len(equations)
         return score, {
             "checked_equations": len(equations),
             "valid_equations": sum(1 for item in equations if item),
+            "ignored_errors": ignored_errors,
             "lines": checked_lines,
         }
 

@@ -200,11 +200,11 @@ def try_parse_numeric_value(text: str) -> float | None:
         try:
             node = ast.parse(candidate, mode="eval")
             return float(_NumericEvaluator().visit(node))
-        except (SyntaxError, ValueError, ZeroDivisionError, OverflowError):
+        except (SyntaxError, TypeError, ValueError, ZeroDivisionError, OverflowError):
             pass
     try:
         return float(candidate)
-    except (ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

@@ -68,6 +68,55 @@ def _finalize_metrics(metrics: dict[str, dict[str, int]]) -> dict[str, dict[str,
     }
 
 
+def _build_pass_at_k(
+    groups: list[ScoredGroup],
+) -> tuple[dict[str, dict[str, float | int]], dict[str, dict[str, dict[str, float | int]]]]:
+    max_group_size = max((len(group.scored_samples) for group in groups), default=0)
+    if max_group_size <= 0:
+        return {}, {"all_correct": {}, "partially_correct": {}, "all_incorrect": {}}
+
+    overall = {k: {"correct": 0, "total": 0} for k in range(1, max_group_size + 1)}
+    per_subset = {
+        "all_correct": {k: {"correct": 0, "total": 0} for k in range(1, max_group_size + 1)},
+        "partially_correct": {k: {"correct": 0, "total": 0} for k in range(1, max_group_size + 1)},
+        "all_incorrect": {k: {"correct": 0, "total": 0} for k in range(1, max_group_size + 1)},
+    }
+
+    for group in groups:
+        partition = _partition_name(group)
+        for k in range(1, max_group_size + 1):
+            window = group.scored_samples[:k]
+            passed = any(item.score.answer_correct for item in window)
+            overall[k]["total"] += 1
+            per_subset[partition][k]["total"] += 1
+            if passed:
+                overall[k]["correct"] += 1
+                per_subset[partition][k]["correct"] += 1
+
+    overall_report = {
+        str(k): {
+            "k": k,
+            "pass_rate": values["correct"] / values["total"] if values["total"] else 0.0,
+            "correct": values["correct"],
+            "total": values["total"],
+        }
+        for k, values in overall.items()
+    }
+    per_subset_report = {
+        subset: {
+            str(k): {
+                "k": k,
+                "pass_rate": values["correct"] / values["total"] if values["total"] else 0.0,
+                "correct": values["correct"],
+                "total": values["total"],
+            }
+            for k, values in subset_values.items()
+        }
+        for subset, subset_values in per_subset.items()
+    }
+    return overall_report, per_subset_report
+
+
 def _ablation_score(sample: ScoredSample, ablation: str) -> float:
     subscores = sample.score.quality_subscores
     if ablation == "drop_local_check":
@@ -97,6 +146,7 @@ def _build_ablation_report(groups: list[ScoredGroup]) -> dict[str, dict[str, flo
 
 def build_report(groups: Iterable[ScoredGroup]) -> dict:
     group_list = list(groups)
+    pass_at_k, per_subset_pass_at_k = _build_pass_at_k(group_list)
     strategies = (
         "greedy",
         "majority_vote",
@@ -202,6 +252,8 @@ def build_report(groups: Iterable[ScoredGroup]) -> dict:
 
     return {
         "strategies": _finalize_metrics(metrics),
+        "pass_at_k": pass_at_k,
+        "per_subset_pass_at_k": per_subset_pass_at_k,
         "per_subset_strategies": {
             subset: _finalize_metrics(strategy_metrics)
             for subset, strategy_metrics in subset_metrics.items()

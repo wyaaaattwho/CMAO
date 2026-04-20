@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Training / generated outputs
+outputs/
+*.safetensors
+*.pt
+*.bin
+*.ckpt
+
+# Logs
+*.log
+nohup.out
+
+# Archives / large local files
+*.zip
+*.tar
+*.tar.gz
+
+# Local generated figures
+reasoning_mode_distribution.png

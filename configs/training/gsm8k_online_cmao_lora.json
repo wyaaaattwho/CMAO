@@ -19,7 +19,7 @@
     "do_sample": true
   },
   "training": {
-    "output_dir": "outputs/train/gsm8k_online_grpo_lora",
+    "output_dir": "outputs/train/gsm8k_online_cmao_lora",
     "learning_rate": 0.0000005,
     "weight_decay": 0.0,
     "rollout_batch_size": 2,
@@ -44,8 +44,11 @@
   },
   "cmao": {
     "lambda_ans": 1.0,
-    "lambda_qual": 0,
-    "lambda_mode": 0
+    "lambda_qual": 0.2,
+    "lambda_mode": 0.1,
+    "quality_correct_only": true,
+    "adv_component_clip": 2.0,
+    "adv_total_clip": 5.0
   },
   "lora": {
     "enabled": true,

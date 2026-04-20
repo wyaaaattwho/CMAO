@@ -1,6 +1,6 @@
 {
   "model": {
-    "name": "outputs/merged/gsm8k_online_grpo_lora"
+    "name": "outputs/merged/gsm8k_online_cmao_lora"
   },
   "dataset": {
     "name": "gsm8k",
