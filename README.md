@@ -51,7 +51,7 @@ data/                     本地数据说明与可选数据镜像
 - `A_mode` 会不会给少见但高质量的推理模式更高权重
 - `quality` 或 `A_total` 重排，是否比直接取第一条更好
 
-如果你现在就想做在线 RL、GRPO、LoRA 训练，这个仓库还不是最终形态，但它已经把数据接口、评分接口和诊断接口准备好了。
+如果你现在想做在线 RL、GRPO、LoRA 训练，可以从 `train_online_grpo` 路线开始；旧的离线 replay 训练实现已经移除。
 
 ## 安装
 
@@ -283,60 +283,33 @@ r_qual =
 - quality 消融结果
 - 每题的 group-level 诊断信息
 
-## Pilot 训练
+## 在线 GRPO 训练
 
-当前仓库已经包含一版 `CMAO` pilot 训练骨架，推荐流程是：
-
-1. 先生成并打分一批 `advantaged groups`
-2. 再把这些 group 扁平化成训练 JSONL
-3. 最后运行 `LoRA + CMAO clipped loss` 做小规模训练
-
-训练数据准备：
-
-```bash
-python scripts/prepare_train_data.py \
-  --input outputs/gsm8k_advantages.json \
-  --output outputs/train/gsm8k_train_records.jsonl
-```
+当前仓库只保留在线 post-training 路线：训练循环会用当前 policy 采样 grouped completions，立即冻结这批 completion 的 old token logprobs，打分并计算 group-relative advantage，然后用 clipped GRPO loss 更新 policy，并用 reference model 做 KL 约束。
 
 训练命令：
-
-```bash
-python scripts/train_policy.py \
-  --config configs/training/gsm8k_cmao_lora.json \
-  --input outputs/train/gsm8k_train_records.jsonl
-```
-
-在线 GRPO 训练命令：
 
 ```bash
 python scripts/train_online_grpo.py \
   --config configs/training/gsm8k_online_grpo_lora.json
 ```
 
-`train_policy` 使用已经保存好的离线样本做回放式更新；`train_online_grpo` 会在训练循环里用当前 policy 采样 grouped completions，立即冻结这批 completion 的 old token logprobs，然后用 `current / old` 做 clipped GRPO ratio，并用单独的 reference model 做 KL 约束。
-
 统一 CLI 也支持：
 
 ```bash
-cmao prepare_train_data --input outputs/gsm8k_advantages.json --output outputs/train/gsm8k_train_records.jsonl
-cmao train_policy --config configs/training/gsm8k_cmao_lora.json --input outputs/train/gsm8k_train_records.jsonl
 cmao train_online_grpo --config configs/training/gsm8k_online_grpo_lora.json
 ```
 
-默认提供两份训练配置：
+默认提供在线训练配置：
 
-- `configs/training/gsm8k_grpo_baseline_lora.json`
-  只使用 `A_ans`
-- `configs/training/gsm8k_cmao_lora.json`
-  使用 `A_ans + 0.5 * A_qual + 0.1 * A_mode`
+- `configs/training/gsm8k_online_grpo_lora.json`
+  只使用答案正确性 reward
+- `configs/training/gsm8k_online_cmao_lora.json`
+  使用答案正确性、质量和 mode reward
+- `configs/training/math500_online_*_lora.json`
+  用于 MATH-500 的 1.5B/7B 在线配置
 
-这版 trainer 的定位是机制验证，不是最终论文版在线 RL 系统：
-
-- 底层用 `Transformers + Accelerate + PEFT`
-- 当前默认训练方式是 `LoRA`
-- 训练数据来自现有离线 pipeline，因此最适合先在 `GSM8K` 上做小规模实验
-- 后续如果要改成更强的在线 rollout / update loop，可以继续复用这里的训练数据格式和 loss 接口
+底层使用 `Transformers + Accelerate + PEFT`，默认训练方式是 `LoRA`。采样与更新在同一个在线循环里完成，不再支持旧的离线 replay 训练入口。
 
 ### `report`
 
@@ -440,9 +413,9 @@ python scripts/report.py \
 
 ## 当前的限制
 
-这版是一期原型，已经能做离线实验，但有一些明确限制：
+这版仍然是研究原型，有一些明确限制：
 
-- 还没有在线 RL / GRPO 训练环节
+- 在线 GRPO 训练环节仍是轻量实现，未接入 vLLM/Ray/ZeRO-3 等大规模训练基础设施
 - `quality_scorer` 还是启发式，不是 PRM / reward model
 - `mode_tagger` 目前是规则系统，不是学习式分类器
 - 数学表达式判定目前偏保守，复杂 LaTeX 场景还可能需要加强
@@ -488,71 +461,3 @@ python scripts/report.py \
 ### 我想看 advantage 是怎么算的？
 
 看 [cmao.py](/home/wyatt/research/CMAO/src/cmao/cmao.py)。
-
----
-
-如果你愿意，我下一步可以继续帮你补两样很实用的东西：
-
-- 一个更完整的 `docker-compose.yml`
-- 一个“从零跑第一次实验”的 `QUICKSTART.md`
-
-
-
-
-python scripts/prepare_train_data.py \
-  --input outputs/gsm8k_advantages.json \
-  --output outputs/train/gsm8k_train_records.jsonl
-
-
-2. 重新训练三组
-
-python scripts/train_policy.py \
-  --config configs/training/gsm8k_grpo_baseline_lora.json \
-  --input outputs/train/gsm8k_train_records.jsonl
-python scripts/train_policy.py \
-  --config configs/training/gsm8k_cmao_lite_lora.json \
-  --input outputs/train/gsm8k_train_records.jsonl
-python scripts/train_policy.py \
-  --config configs/training/gsm8k_cmao_lora.json \
-  --input outputs/train/gsm8k_train_records.jsonl
-  
-3. 重新合并 LoRA
-
-python scripts/merge_lora.py \
-  --adapter outputs/train/gsm8k_grpo_baseline_lora/checkpoint-final \
-  --output outputs/merged/gsm8k_grpo_baseline
-python scripts/merge_lora.py \
-  --adapter outputs/train/gsm8k_cmao_lite_lora/checkpoint-final \
-  --output outputs/merged/gsm8k_cmao_lite
-python scripts/merge_lora.py \
-  --adapter outputs/train/gsm8k_cmao_lora/checkpoint-final \
-  --output outputs/merged/gsm8k_cmao_full
-
-4. 重新评测
-
-base：
-
-python scripts/sample.py --config configs/experiment/eval_gsm8k_base_100.json --output outputs/eval/gsm8k_base_samples.json
-python scripts/score.py --input outputs/eval/gsm8k_base_samples.json --output outputs/eval/gsm8k_base_scores.json --config configs/scoring/default.json
-python scripts/advantage.py --input outputs/eval/gsm8k_base_scores.json --output outputs/eval/gsm8k_base_advantages.json --config configs/scoring/default.json
-python scripts/report.py --input outputs/eval/gsm8k_base_advantages.json --output outputs/eval/gsm8k_base_report.json
-
-GRPO：
-
-python scripts/sample.py --config configs/experiment/eval_gsm8k_grpo_100.json --output outputs/eval/gsm8k_grpo_samples.json
-python scripts/score.py --input outputs/eval/gsm8k_grpo_samples.json --output outputs/eval/gsm8k_grpo_scores.json --config configs/scoring/default.json
-python scripts/advantage.py --input outputs/eval/gsm8k_grpo_scores.json --output outputs/eval/gsm8k_grpo_advantages.json --config configs/scoring/default.json
-python scripts/report.py --input outputs/eval/gsm8k_grpo_advantages.json --output outputs/eval/gsm8k_grpo_report.json
-
-CMAO-lite：
-
-python scripts/sample.py --config configs/experiment/eval_gsm8k_cmao_lite_100.json --output outputs/eval/gsm8k_cmao_lite_samples.json
-python scripts/score.py --input outputs/eval/gsm8k_cmao_lite_samples.json --output outputs/eval/gsm8k_cmao_lite_scores.json --config configs/scoring/default.json
-python scripts/advantage.py --input outputs/eval/gsm8k_cmao_lite_scores.json --output outputs/eval/gsm8k_cmao_lite_advantages.json --config configs/scoring/default.json
-python scripts/report.py --input outputs/eval/gsm8k_cmao_lite_advantages.json --output outputs/eval/gsm8k_cmao_lite_report.json
-Full-CMAO：
-
-python scripts/sample.py --config configs/experiment/eval_gsm8k_cmao_full_100.json --output outputs/eval/gsm8k_cmao_full_samples.json
-python scripts/score.py --input outputs/eval/gsm8k_cmao_full_samples.json --output outputs/eval/gsm8k_cmao_full_scores.json --config configs/scoring/default.json
-python scripts/advantage.py --input outputs/eval/gsm8k_cmao_full_scores.json --output outputs/eval/gsm8k_cmao_full_advantages.json --config configs/scoring/default.json
-python scripts/report.py --input outputs/eval/gsm8k_cmao_full_advantages.json --output outputs/eval/gsm8k_cmao_full_report.json

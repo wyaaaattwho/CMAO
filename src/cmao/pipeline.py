@@ -13,9 +13,7 @@ from .io_utils import load_json, save_json
 from .mode_tagger import ModeTagger
 from .quality_scorer import QualityScorer
 from .reporter import build_report
-from .trainer import run_train_online_grpo, run_train_policy
-from .training_quality import TrainingQualityConfig
-from .training_data import flatten_training_records, save_training_records
+from .trainer import run_train_online_grpo
 from .types import GroupedSamples, ScoredGroup, ScoredSample, ScoreBundle
 
 try:
@@ -170,27 +168,6 @@ def save_report(input_path: str, output_path: str) -> dict[str, Any]:
     report = run_report(input_path)
     save_json(output_path, report)
     return report
-
-
-def run_prepare_train_data(input_path: str, output_path: str) -> dict[str, Any]:
-    groups = _load_scored_groups(input_path)
-    records = flatten_training_records(groups, quality_config=TrainingQualityConfig())
-    summary = save_training_records(output_path, records)
-    save_json(
-        f"{output_path}.summary.json",
-        {
-            "input_path": input_path,
-            "output_path": output_path,
-            "training_quality_mode": "correct_only_pairwise",
-            "pairwise_margin": TrainingQualityConfig().pairwise_margin,
-            **summary,
-        },
-    )
-    return summary
-
-
-def run_train(config_path: str, training_path: str) -> dict[str, Any]:
-    return run_train_policy(config_path=config_path, training_path=training_path)
 
 
 def run_train_online(config_path: str) -> dict[str, Any]:

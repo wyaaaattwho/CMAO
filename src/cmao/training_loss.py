@@ -11,17 +11,6 @@ class LossBreakdown:
     clip_fraction: float
 
 
-def build_total_advantage(
-    a_ans,
-    a_qual,
-    a_mode,
-    lambda_ans: float = 1.0,
-    lambda_qual: float = 1.0,
-    lambda_mode: float = 1.0,
-):
-    return lambda_ans * a_ans + lambda_qual * a_qual + lambda_mode * a_mode
-
-
 def cmao_clipped_policy_loss(
     current_logprobs,
     old_logprobs,

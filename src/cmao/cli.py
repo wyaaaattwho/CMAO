@@ -6,12 +6,10 @@ import json
 from .pipeline import (
     run_advantage,
     run_analyze_cases,
-    run_prepare_train_data,
     run_report,
     run_rerank_eval,
     run_sample,
     run_score,
-    run_train,
     run_train_online,
     save_report,
 )
@@ -47,17 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_cases.add_argument("--input", required=True)
     analyze_cases.add_argument("--output-prefix", required=True)
 
-    prepare_train_data = subparsers.add_parser(
-        "prepare_train_data",
-        help="Flatten advantaged groups into policy training JSONL records.",
-    )
-    prepare_train_data.add_argument("--input", required=True)
-    prepare_train_data.add_argument("--output", required=True)
-
-    train = subparsers.add_parser("train_policy", help="Run CMAO LoRA policy training.")
-    train.add_argument("--config", required=True)
-    train.add_argument("--input", required=True)
-
     online_train = subparsers.add_parser("train_online_grpo", help="Run online GRPO/CMAO policy training.")
     online_train.add_argument("--config", required=True)
     return parser
@@ -90,15 +77,6 @@ def main() -> None:
         result = run_analyze_cases(args.input, args.output_prefix)
         print(f"Saved case records to {result['case_path']}")
         print(f"Saved case summary to {result['summary_path']}")
-        return
-    if args.command == "prepare_train_data":
-        summary = run_prepare_train_data(args.input, args.output)
-        print(f"Saved training records to {args.output}")
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
-        return
-    if args.command == "train_policy":
-        summary = run_train(args.config, args.input)
-        print(f"Saved training summary to {summary['output_dir']}/training_summary.json")
         return
     if args.command == "train_online_grpo":
         summary = run_train_online(args.config)
