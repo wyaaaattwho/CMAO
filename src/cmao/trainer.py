@@ -10,6 +10,7 @@ from .answer_judge import AnswerJudge, extract_final_answer
 from .cmao import CMAOComputer
 from .config import load_config
 from .datasets import load_problems
+from .generator import format_chat_prompt
 from .io_utils import ensure_parent, save_json
 from .mode_tagger import ModeTagger
 from .quality_scorer import QualityScorer
@@ -41,7 +42,7 @@ class OnlineGRPOConfig:
     update_epochs: int = 1
     max_new_tokens: int = 512
     max_length: int = 2048
-    temperature: float = 0.7
+    temperature: float = 0.6
     top_p: float = 0.95
     repetition_penalty: float = 1.05
     no_repeat_ngram_size: int = 3
@@ -98,7 +99,7 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         update_epochs=train_cfg.get("update_epochs", 1),
         max_new_tokens=sampling_cfg.get("max_new_tokens", 512),
         max_length=train_cfg.get("max_length", 2048),
-        temperature=sampling_cfg.get("temperature", 0.7),
+        temperature=sampling_cfg.get("temperature", 0.6),
         top_p=sampling_cfg.get("top_p", 0.95),
         repetition_penalty=sampling_cfg.get("repetition_penalty", 1.05),
         no_repeat_ngram_size=sampling_cfg.get("no_repeat_ngram_size", 3),
@@ -408,6 +409,11 @@ class OnlineGRPOTrainer:
             rollout = self._collect_rollout(selected, rollout_step=iteration)
             update_summary = self._update_from_rollout(rollout)
             optimizer_step += update_summary["optimizer_steps"]
+            weighted_rewards = (
+                self.config.lambda_ans * rollout.a_ans
+                + self.config.lambda_qual * rollout.a_qual
+                + self.config.lambda_mode * rollout.a_mode
+            )
 
             record = {
                 "iteration": iteration + 1,
@@ -419,6 +425,8 @@ class OnlineGRPOTrainer:
                 "a_ans_mean": float(rollout.a_ans.mean().item()),
                 "a_qual_mean": float(rollout.a_qual.mean().item()),
                 "a_mode_mean": float(rollout.a_mode.mean().item()),
+                "weighted_reward_mean": float(weighted_rewards.mean().item()),
+                "weighted_reward_std": float(weighted_rewards.std(unbiased=False).item()),
                 "a_total_abs_mean": float(rollout.a_total.abs().mean().item()),
                 "nonzero_advantage_ratio": float((rollout.a_total.abs() > 1e-8).float().mean().item()),
                 "zero_advantage_group_count": rollout.diagnostics["zero_advantage_group_count"],
@@ -489,6 +497,7 @@ class OnlineGRPOTrainer:
                     + "\n\nSolve carefully and end with exactly one line in this format:\n"
                     + "Final Answer: <number>\n"
                 )
+                prefix_text = format_chat_prompt(self.tokenizer, prefix_text, enable_thinking=True)
                 encoded = self.tokenizer(
                     prefix_text,
                     return_tensors="pt",

@@ -151,6 +151,36 @@ def run_rerank_eval(input_path: str, output_path: str) -> None:
     save_json(output_path, report)
 
 
+def run_evaluate(
+    config_path: str,
+    output_dir: str,
+    scoring_config_path: str | None = None,
+    analyze_cases_output_prefix: str | None = None,
+) -> dict[str, Any]:
+    target_dir = Path(output_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    sample_path = target_dir / "samples.json"
+    score_path = target_dir / "scores.json"
+    advantage_path = target_dir / "advantages.json"
+    report_path = target_dir / "report.json"
+
+    run_sample(config_path, str(sample_path))
+    run_score(str(sample_path), str(score_path), scoring_config_path)
+    run_advantage(str(score_path), str(advantage_path), scoring_config_path)
+    report = save_report(str(advantage_path), str(report_path))
+
+    result: dict[str, Any] = {
+        "sample_path": str(sample_path),
+        "score_path": str(score_path),
+        "advantage_path": str(advantage_path),
+        "report_path": str(report_path),
+        "report": report,
+    }
+    if analyze_cases_output_prefix:
+        result["case_analysis"] = run_analyze_cases(str(advantage_path), analyze_cases_output_prefix)
+    return result
+
+
 def run_report(input_path: str) -> dict[str, Any]:
     payload = load_json(input_path)
     if "groups" in payload:

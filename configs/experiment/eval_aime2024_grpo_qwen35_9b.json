@@ -1,6 +1,6 @@
 {
   "model": {
-    "name": "outputs/merged/math500_online_grpo_1.5b_lora"
+    "name": "outputs/merged/aime2024_online_grpo_qwen35_9b_lora"
   },
   "dataset": {
     "name": "Maxwell-Jia/AIME_2024",
@@ -9,9 +9,9 @@
   },
   "sampling": {
     "group_size": 16,
-    "temperature": 0.7,
+    "temperature": 0.6,
     "top_p": 0.95,
-    "max_new_tokens": 1024,
+    "max_new_tokens": 2048,
     "do_sample": true
   }
 }

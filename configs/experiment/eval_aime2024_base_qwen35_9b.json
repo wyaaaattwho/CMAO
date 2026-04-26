@@ -1,0 +1,17 @@
+{
+  "model": {
+    "name": "Qwen/Qwen3.5-9B"
+  },
+  "dataset": {
+    "name": "Maxwell-Jia/AIME_2024",
+    "split": "train",
+    "limit": 100
+  },
+  "sampling": {
+    "group_size": 16,
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "max_new_tokens": 2048,
+    "do_sample": true
+  }
+}

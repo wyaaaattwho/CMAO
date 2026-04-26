@@ -5,14 +5,14 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
-DATASET_NAME="${DATASET_NAME:-math-500}"
-DATASET_SPLIT="${DATASET_SPLIT:-test}"
+DATASET_NAME="${DATASET_NAME:-Maxwell-Jia/AIME_2024}"
+DATASET_SPLIT="${DATASET_SPLIT:-train}"
 DATASET_LIMIT="${DATASET_LIMIT:-}"
 DATASET_CONFIG_NAME="${DATASET_CONFIG_NAME:-}"
-DATASET_TAG="${DATASET_TAG:-math500test}"
+DATASET_TAG="${DATASET_TAG:-aime2024}"
 
 GROUP_SIZE="${GROUP_SIZE:-8}"
-TEMPERATURE="${TEMPERATURE:-0.7}"
+TEMPERATURE="${TEMPERATURE:-0.6}"
 TOP_P="${TOP_P:-0.95}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-2048}"
 DO_SAMPLE="${DO_SAMPLE:-true}"
@@ -25,12 +25,9 @@ MAX_PARALLEL="${MAX_PARALLEL:-}"
 # type=adapter: source is adapter checkpoint dir
 # type=base: source is model id/path
 RUNS=(
-  "math500_online_grpo_1.5b_lora|adapter|outputs/train/math500_online_grpo_1.5b_lora/checkpoint-final"
-  "math500_online_cmao_1.5b_lora|adapter|outputs/train/math500_online_cmao_1.5b_lora/checkpoint-final"
-  "math500_online_grpo_7b_lora|adapter|outputs/train/math500_online_grpo_7b_lora/checkpoint-final"
-  "math500_online_cmao_7b_lora|adapter|outputs/train/math500_online_cmao_7b_lora/checkpoint-final"
-  "qwen2.5-math-1.5b-base|base|Qwen/Qwen2.5-Math-1.5B-Instruct"
-  "qwen2.5-math-7b-base|base|Qwen/Qwen2.5-Math-7B-Instruct"
+  "aime2024_grpo_qwen35_9b|adapter|outputs/train/aime2024_online_grpo_qwen35_9b_lora/checkpoint-final"
+  "aime2024_cmao_qwen35_9b|adapter|outputs/train/aime2024_online_cmao_qwen35_9b_lora/checkpoint-final"
+  "qwen35-9b-base|base|Qwen/Qwen3.5-9B"
 )
 
 usage() {
@@ -38,13 +35,13 @@ usage() {
 Usage: bash scripts/eval_aime_all_online.sh [options]
 
 Options:
-  --dataset-name NAME           Dataset name (default: math-500)
-  --dataset-split SPLIT         Dataset split (default: test)
+  --dataset-name NAME           Dataset name (default: Maxwell-Jia/AIME_2024)
+  --dataset-split SPLIT         Dataset split (default: train)
   --dataset-limit N             Limit number of problems (default: all)
   --dataset-config-name NAME    Optional HF dataset config name
-  --dataset-tag TAG             Output suffix tag (default: math500test)
+  --dataset-tag TAG             Output suffix tag (default: aime2024)
   --group-size N                Sampling group size (default: 8)
-  --temperature F               Sampling temperature (default: 0.7)
+  --temperature F               Sampling temperature (default: 0.6)
   --top-p F                     Sampling top-p (default: 0.95)
   --max-new-tokens N            Max new tokens (default: 2048)
   --do-sample BOOL              true/false (default: true)
@@ -56,7 +53,7 @@ Options:
   -h, --help                    Show this help message
 
 Example:
-  bash scripts/eval_aime_all_online.sh --dataset-name math-500 --dataset-split test --dataset-limit 500 --dataset-tag math500test
+  bash scripts/eval_aime_all_online.sh --dataset-name Maxwell-Jia/AIME_2024 --dataset-split train --dataset-limit 100 --dataset-tag aime2024
 EOF
 }
 
@@ -306,4 +303,4 @@ if [[ "$AUTO_SUMMARY" == "1" ]]; then
     --output-prefix "outputs/eval/${DATASET_TAG}_comparison"
 fi
 
-echo "[DONE] Evaluation finished for 6 models on ${DATASET_NAME}/${DATASET_SPLIT} (GPU round-robin)."
+echo "[DONE] Evaluation finished for ${#RUNS[@]} models on ${DATASET_NAME}/${DATASET_SPLIT} (GPU round-robin)."

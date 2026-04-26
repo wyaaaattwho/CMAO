@@ -1,14 +1,15 @@
 {
   "model": {
-    "name": "Qwen/Qwen2.5-Math-1.5B-Instruct"
+    "name": "outputs/merged/math500_online_grpo_qwen35_9b_lora"
   },
   "dataset": {
     "name": "math-500",
-    "split": "test"
+    "split": "test",
+    "limit": 500
   },
   "sampling": {
-    "group_size": 8,
-    "temperature": 0.7,
+    "group_size": 16,
+    "temperature": 0.6,
     "top_p": 0.95,
     "max_new_tokens": 2048,
     "do_sample": true

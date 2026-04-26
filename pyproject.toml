@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cmao"
 version = "0.1.0"
-description = "Correct-Mode Advantage Optimization offline experimentation toolkit."
+description = "Correct-Mode Advantage Optimization experimentation toolkit."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+plot = ["matplotlib>=3.8"]
 
 [project.scripts]
 cmao = "cmao.cli:main"

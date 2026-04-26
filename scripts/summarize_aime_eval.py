@@ -7,15 +7,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-REPORT_SUFFIX = "_math500test_report.json"
-ANALYSIS_SUFFIX = "_math500test_analysis_summary.json"
+REPORT_SUFFIX = "_aime2024_report.json"
+ANALYSIS_SUFFIX = "_aime2024_analysis_summary.json"
 EXPECTED_MODELS_DEFAULT = (
-    "math500_online_grpo_1.5b_lora",
-    "math500_online_cmao_1.5b_lora",
-    "math500_online_grpo_7b_lora",
-    "math500_online_cmao_7b_lora",
-    "qwen2.5-math-1.5b-base",
-    "qwen2.5-math-7b-base",
+    "aime2024_grpo_qwen35_9b",
+    "aime2024_cmao_qwen35_9b",
+    "qwen35-9b-base",
 )
 
 
@@ -45,7 +42,7 @@ def _parse_model_tag(name: str) -> tuple[str, str]:
         method = "grpo"
     else:
         method = "unknown"
-    size = "7b" if "_7b_" in name else ("1.5b" if "_1.5b_" in name else "unknown")
+    size = "9b" if "qwen35_9b" in name or "qwen35-9b" in name else "unknown"
     return method, size
 
 
@@ -210,11 +207,11 @@ def _to_md_table(rows: list[dict[str, Any]], columns: list[tuple[str, str]]) -> 
 
 def _build_markdown(rows: list[dict[str, Any]], case_keys: set[str]) -> str:
     if not rows:
-        return "# math500test Eval Summary\n\nNo *_math500test_report.json files found.\n"
+        return "# AIME 2024 Eval Summary\n\nNo *_aime2024_report.json files found.\n"
 
     top = rows[0]
     lines: list[str] = [
-        "# math500test Evaluation Summary",
+        "# AIME 2024 Evaluation Summary",
         "",
         f"- Models compared: {len(rows)}",
         f"- Best by a_total: {top['model_id']} ({_pct(top.get('a_total_acc'))})",
@@ -344,7 +341,7 @@ def _build_markdown(rows: list[dict[str, Any]], case_keys: set[str]) -> str:
 
     lines.extend(["", "## CMAO vs GRPO Delta (Same Size)", ""])
     pair_rows = []
-    for size in ("1.5b", "7b"):
+    for size in ("9b",):
         grpo = next((item for item in rows if item["size"] == size and item["method"] == "grpo"), None)
         cmao = next((item for item in rows if item["size"] == size and item["method"] == "cmao"), None)
         if not grpo or not cmao:
@@ -392,7 +389,7 @@ def main() -> None:
         default=",".join(EXPECTED_MODELS_DEFAULT),
         help="Comma-separated model ids that must appear in the comparison table.",
     )
-    parser.add_argument("--output-prefix", default="outputs/eval/math500test_comparison", help="Output prefix for summary artifacts.")
+    parser.add_argument("--output-prefix", default="outputs/eval/aime2024_comparison", help="Output prefix for summary artifacts.")
     args = parser.parse_args()
 
     eval_dir = Path(args.eval_dir)

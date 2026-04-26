@@ -10,7 +10,7 @@ from .types import ProblemRecord, ReasoningSample
 @dataclass
 class SamplingConfig:
     group_size: int = 8
-    temperature: float = 0.7
+    temperature: float = 0.6
     top_p: float = 0.95
     max_new_tokens: int = 1024
     do_sample: bool = True
@@ -24,6 +24,25 @@ class GeneratorBackend:
         run_metadata: dict[str, Any] | None = None,
     ) -> list[ReasoningSample]:
         raise NotImplementedError
+
+
+def format_chat_prompt(tokenizer, prompt: str, *, enable_thinking: bool = True) -> str:
+    messages = [{"role": "user", "content": prompt.strip()}]
+    if hasattr(tokenizer, "apply_chat_template"):
+        try:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+                enable_thinking=enable_thinking,
+            )
+        except TypeError:
+            return tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+    return prompt.strip()
 
 
 class TransformersGeneratorBackend(GeneratorBackend):
@@ -62,7 +81,7 @@ class TransformersGeneratorBackend(GeneratorBackend):
         sampling_cfg: SamplingConfig,
         run_metadata: dict[str, Any] | None = None,
     ) -> list[ReasoningSample]:
-        prompt = problem.prompt.strip()
+        prompt = format_chat_prompt(self.tokenizer, problem.prompt, enable_thinking=True)
         encoded = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         outputs = self.model.generate(
             **encoded,
@@ -96,4 +115,3 @@ class TransformersGeneratorBackend(GeneratorBackend):
                 )
             )
         return samples
-

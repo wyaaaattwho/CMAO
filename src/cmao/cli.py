@@ -6,6 +6,7 @@ import json
 from .pipeline import (
     run_advantage,
     run_analyze_cases,
+    run_evaluate,
     run_report,
     run_rerank_eval,
     run_sample,
@@ -16,7 +17,7 @@ from .pipeline import (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="CMAO offline experimentation CLI")
+    parser = argparse.ArgumentParser(description="CMAO experimentation CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     sample = subparsers.add_parser("sample", help="Sample grouped CoTs from a model.")
@@ -44,6 +45,13 @@ def build_parser() -> argparse.ArgumentParser:
     analyze_cases = subparsers.add_parser("analyze_cases", help="Export representative case studies.")
     analyze_cases.add_argument("--input", required=True)
     analyze_cases.add_argument("--output-prefix", required=True)
+
+    evaluate = subparsers.add_parser("evaluate", help="Run sample, score, advantage, and report in one command.")
+    evaluate.add_argument("--config", required=True)
+    evaluate.add_argument("--output-dir", required=True)
+    evaluate.add_argument("--scoring-config", default="configs/scoring/default.json")
+    evaluate.add_argument("--analyze-cases", action="store_true")
+    evaluate.add_argument("--case-output-prefix")
 
     online_train = subparsers.add_parser("train_online_grpo", help="Run online GRPO/CMAO policy training.")
     online_train.add_argument("--config", required=True)
@@ -77,6 +85,24 @@ def main() -> None:
         result = run_analyze_cases(args.input, args.output_prefix)
         print(f"Saved case records to {result['case_path']}")
         print(f"Saved case summary to {result['summary_path']}")
+        return
+    if args.command == "evaluate":
+        case_prefix = args.case_output_prefix
+        if args.analyze_cases and not case_prefix:
+            case_prefix = f"{args.output_dir.rstrip('/')}/analysis"
+        result = run_evaluate(
+            config_path=args.config,
+            output_dir=args.output_dir,
+            scoring_config_path=args.scoring_config,
+            analyze_cases_output_prefix=case_prefix,
+        )
+        print(f"Saved samples to {result['sample_path']}")
+        print(f"Saved scores to {result['score_path']}")
+        print(f"Saved advantages to {result['advantage_path']}")
+        print(f"Saved report to {result['report_path']}")
+        if "case_analysis" in result:
+            print(f"Saved case records to {result['case_analysis']['case_path']}")
+            print(f"Saved case summary to {result['case_analysis']['summary_path']}")
         return
     if args.command == "train_online_grpo":
         summary = run_train_online(args.config)
