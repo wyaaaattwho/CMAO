@@ -356,13 +356,25 @@ cmao train_online_grpo --config configs/training/math500_online_grpo_qwen35_9b_l
 默认提供在线训练配置：
 
 - `configs/training/aime2024_online_grpo_qwen35_9b_lora.json`
-  AIME 2024 上的 GRPO baseline
+  面向 AIME 2024 评测的 GRPO baseline
 - `configs/training/aime2024_online_cmao_qwen35_9b_lora.json`
-  AIME 2024 上的 CMAO
+  面向 AIME 2024 评测的 CMAO
 - `configs/training/math500_online_grpo_qwen35_9b_lora.json`
-  MATH-500 上的 GRPO baseline
+  面向 MATH-500 评测的 GRPO baseline
 - `configs/training/math500_online_*_qwen35_9b_lora.json`
-  MATH-500 上的 CMAO/GRPO Qwen3.5-9B 在线配置
+  面向 MATH-500 评测的 CMAO/GRPO Qwen3.5-9B 在线配置
+
+注意：训练配置不使用 AIME 2024 或 MATH-500 的评测 split。当前四个在线训练配置都使用 `zzy1123/MATH_train_test_split` 的 `train` split，AIME 2024 和 MATH-500 只出现在 `configs/experiment/` 的测试配置里，避免 train/test 污染。
+
+这些训练配置按 H20 144GB 单卡做了标准起跑设置：
+
+- `rollout_batch_size=8`
+- `group_size=8`
+- `mini_batch_size=8`
+- `gradient_accumulation_steps=8`
+- `update_epochs=1`
+- `learning_rate=3e-7`
+- `kl_coef=0.03`
 
 底层使用 `Transformers + Accelerate + PEFT`，默认训练方式是 `LoRA`。采样与更新在同一个在线循环里完成，不再支持旧的离线 replay 训练入口。
 
@@ -524,7 +536,7 @@ python scripts/report.py \
 2. 用 `eval_math500_base_qwen35_9b.json` 跑一轮 base 评测
 3. 看 `report` 里 `all_correct_group_count` 和 `avg_all_correct_quality_variance`
 4. 观察 `quality` 和 `a_total` 是否优于 `greedy`
-5. 再扩到 `MATH-500`
+5. 再跑 AIME 2024 的 base/GRPO/CMAO 对比
 
 ## 后续扩展建议
 

@@ -4,9 +4,9 @@
     "trust_remote_code": true
   },
   "dataset": {
-    "name": "Maxwell-Jia/AIME_2024",
+    "name": "zzy1123/MATH_train_test_split",
     "split": "train",
-    "limit": 100
+    "limit": 7500
   },
   "sampling": {
     "group_size": 8,
@@ -19,17 +19,17 @@
   },
   "training": {
     "output_dir": "outputs/train/aime2024_online_cmao_qwen35_9b_lora",
-    "learning_rate": 0.0000005,
+    "learning_rate": 0.0000003,
     "weight_decay": 0.0,
-    "rollout_batch_size": 2,
-    "mini_batch_size": 4,
-    "gradient_accumulation_steps": 2,
+    "rollout_batch_size": 8,
+    "mini_batch_size": 8,
+    "gradient_accumulation_steps": 8,
     "num_iterations": 800,
     "max_bad_iterations": 30,
-    "update_epochs": 4,
+    "update_epochs": 1,
     "max_length": 4096,
     "clip_range": 0.2,
-    "kl_coef": 0.02,
+    "kl_coef": 0.03,
     "max_grad_norm": 1.0,
     "bf16": true,
     "logging_steps": 1,
@@ -43,8 +43,8 @@
   },
   "cmao": {
     "lambda_ans": 1.0,
-    "lambda_qual": 0.4,
-    "lambda_mode": 0.1,
+    "lambda_qual": 0.3,
+    "lambda_mode": 0.05,
     "quality_correct_only": true,
     "adv_component_clip": 2.0,
     "adv_total_clip": 4.0
