@@ -612,6 +612,7 @@ class OnlineGRPOTrainer:
         try:
             import torch
             from accelerate import Accelerator
+            from accelerate import DistributedDataParallelKwargs
             from accelerate.utils import set_seed
             from torch.optim import AdamW
             from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -623,6 +624,7 @@ class OnlineGRPOTrainer:
 
         self.torch = torch
         self.Accelerator = Accelerator
+        self.DistributedDataParallelKwargs = DistributedDataParallelKwargs
         self.set_seed = set_seed
         self.AdamW = AdamW
         self.AutoModelForCausalLM = AutoModelForCausalLM
@@ -638,7 +640,11 @@ class OnlineGRPOTrainer:
         if not self.problems:
             raise ValueError("Online GRPO training requires at least one problem.")
 
-        self.accelerator = Accelerator(mixed_precision="bf16" if config.bf16 else "no")
+        ddp_kwargs = self.DistributedDataParallelKwargs(broadcast_buffers=False)
+        self.accelerator = Accelerator(
+            mixed_precision="bf16" if config.bf16 else "no",
+            kwargs_handlers=[ddp_kwargs],
+        )
         self.set_seed(config.seed)
 
         self.tokenizer = self.AutoTokenizer.from_pretrained(
@@ -987,7 +993,7 @@ class OnlineGRPOTrainer:
             attention_mask = _pad_1d_tensors(attention_masks, 0)
             response_mask = _pad_1d_tensors(response_masks, 0.0)
             old_stats = _forward_response_stats(
-                self.model,
+                unwrapped_model,
                 input_ids,
                 attention_mask,
                 prompt_lengths=[0 for _ in range(int(input_ids.shape[0]))],
@@ -1061,6 +1067,7 @@ class OnlineGRPOTrainer:
 
     def _update_from_rollout(self, rollout: OnlineRolloutBatch) -> dict[str, Any]:
         self.model.train()
+        unwrapped_reference_model = self.accelerator.unwrap_model(self.reference_model)
         num_samples = int(rollout.input_ids.shape[0])
         total_loss = 0.0
         total_policy_loss = 0.0
@@ -1082,7 +1089,7 @@ class OnlineGRPOTrainer:
                 )
                 with self.torch.no_grad():
                     reference_stats = _forward_response_stats(
-                        self.reference_model,
+                        unwrapped_reference_model,
                         rollout.input_ids[indices],
                         rollout.attention_mask[indices],
                         prompt_lengths=[0 for _ in range(int(indices.shape[0]))],

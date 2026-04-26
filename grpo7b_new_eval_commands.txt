@@ -1,0 +1,114 @@
+set -euo pipefail
+
+cd /home/lfeng/CMAO
+
+mkdir -p /home/lfeng/CMAO/outputs/merged
+mkdir -p /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/configs
+
+python /home/lfeng/CMAO/scripts/merge_lora.py \
+  --adapter /home/lfeng/CMAO/outputs/train/math500_online_cmao_7b_lora/checkpoint-final \
+  --output /home/lfeng/CMAO/outputs/merged/math500_online_cmao_7b_lora_20260424
+
+cat > /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/configs/cmao7b_new_aime.json <<'EOC'
+{
+  "model": {
+    "name": "/home/lfeng/CMAO/outputs/merged/math500_online_cmao_7b_lora_20260424"
+  },
+  "dataset": {
+    "name": "Maxwell-Jia/AIME_2024",
+    "split": "train",
+    "limit": 100
+  },
+  "sampling": {
+    "group_size": 16,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "do_sample": true
+  }
+}
+EOC
+
+cat > /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/configs/cmao7b_new_math500_test.json <<'EOC'
+{
+  "model": {
+    "name": "/home/lfeng/CMAO/outputs/merged/math500_online_cmao_7b_lora_20260424"
+  },
+  "dataset": {
+    "name": "math-500",
+    "split": "test",
+    "limit": 500
+  },
+  "sampling": {
+    "group_size": 8,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "do_sample": true
+  }
+}
+EOC
+
+CUDA_VISIBLE_DEVICES=0 python -m cmao.cli sample \
+  --config /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/configs/cmao7b_new_aime.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_samples.json
+
+python -m cmao.cli score \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_samples.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_scores.json \
+  --config /home/lfeng/CMAO/configs/scoring/default.json
+
+python -m cmao.cli advantage \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_scores.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_advantages.json \
+  --config /home/lfeng/CMAO/configs/scoring/default.json
+
+python -m cmao.cli rerank_eval \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_advantages.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_report.json
+
+python -m cmao.cli report \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_advantages.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_report_pretty.json
+
+python -m cmao.cli analyze_cases \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_advantages.json \
+  --output-prefix /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_aime_analysis
+
+CUDA_VISIBLE_DEVICES=0 python -m cmao.cli sample \
+  --config /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/configs/cmao7b_new_math500_test.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_samples.json
+
+python -m cmao.cli score \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_samples.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_scores.json \
+  --config /home/lfeng/CMAO/configs/scoring/default.json
+
+python -m cmao.cli advantage \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_scores.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_advantages.json \
+  --config /home/lfeng/CMAO/configs/scoring/default.json
+
+python -m cmao.cli rerank_eval \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_advantages.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_report.json
+
+python -m cmao.cli report \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_advantages.json \
+  --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_report_pretty.json
+
+python -m cmao.cli analyze_cases \
+  --input /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_advantages.json \
+  --output-prefix /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_analysis
+
+python /home/lfeng/CMAO/scripts/summarize_aime_eval.py \
+  --eval-dir /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424 \
+  --train-dir /home/lfeng/CMAO/outputs/train \
+  --output-prefix /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/aime_single_model_summary
+
+echo "DONE: outputs written under /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424"
+
+
+python -m cmao.cli sample   --config /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/configs/cmao7b_new_math500_test.json   --output /home/lfeng/CMAO/outputs/eval/cmao7b_new_20260424/math500_online_cmao_7b_lora_new_math500_test_samples.json
+
+python /home/lfeng/CMAO/scripts/merge_lora.py   --adapter /home/lfeng/CMAO/outputs/train/math500_online_cmao_7b_lora/checkpoint-final   --output /home/lfeng/CMAO/outputs/merged/math500_online_cmao_7b_lora_20260424

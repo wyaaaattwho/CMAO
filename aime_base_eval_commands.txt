@@ -1,0 +1,60 @@
+cd /home/lfeng/CMAO
+mkdir -p /home/lfeng/CMAO/outputs/eval/base/aime_configs
+
+cat > /home/lfeng/CMAO/outputs/eval/base/aime_configs/qwen2.5_math_1.5b_base.json <<'EOF'
+{
+  "model": {
+    "name": "Qwen/Qwen2.5-Math-1.5B-Instruct",
+    "trust_remote_code": true
+  },
+  "dataset": {
+    "name": "Maxwell-Jia/AIME_2024",
+    "split": "train",
+    "limit": 100
+  },
+  "sampling": {
+    "group_size": 16,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "do_sample": true
+  }
+}
+EOF
+
+cat > /home/lfeng/CMAO/outputs/eval/base/aime_configs/qwen2.5_math_7b_base.json <<'EOF'
+{
+  "model": {
+    "name": "Qwen/Qwen2.5-Math-7B-Instruct",
+    "trust_remote_code": true
+  },
+  "dataset": {
+    "name": "Maxwell-Jia/AIME_2024",
+    "split": "train",
+    "limit": 100
+  },
+  "sampling": {
+    "group_size": 16,
+    "temperature": 0.7,
+    "top_p": 0.95,
+    "max_new_tokens": 1024,
+    "do_sample": true
+  }
+}
+EOF
+
+CUDA_VISIBLE_DEVICES=0 python -m cmao.cli sample --config /home/lfeng/CMAO/outputs/eval/base/aime_configs/qwen2.5_math_1.5b_base.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_samples.json
+python -m cmao.cli score --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_samples.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_scores.json --config /home/lfeng/CMAO/configs/scoring/default.json
+python -m cmao.cli advantage --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_scores.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_advantages.json --config /home/lfeng/CMAO/configs/scoring/default.json
+python -m cmao.cli rerank_eval --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_advantages.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_report.json
+python -m cmao.cli report --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_advantages.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_report_pretty.json
+python -m cmao.cli analyze_cases --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_advantages.json --output-prefix /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_1.5b_base_aime_analysis
+
+CUDA_VISIBLE_DEVICES=1 python -m cmao.cli sample --config /home/lfeng/CMAO/outputs/eval/base/aime_configs/qwen2.5_math_7b_base.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_samples.json
+python -m cmao.cli score --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_samples.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_scores.json --config /home/lfeng/CMAO/configs/scoring/default.json
+python -m cmao.cli advantage --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_scores.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_advantages.json --config /home/lfeng/CMAO/configs/scoring/default.json
+python -m cmao.cli rerank_eval --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_advantages.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_report.json
+python -m cmao.cli report --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_advantages.json --output /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_report_pretty.json
+python -m cmao.cli analyze_cases --input /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_advantages.json --output-prefix /home/lfeng/CMAO/outputs/eval/base/qwen2.5_math_7b_base_aime_analysis
+
+python /home/lfeng/CMAO/scripts/summarize_aime_eval.py --eval-dir /home/lfeng/CMAO/outputs/eval/base --train-dir /home/lfeng/CMAO/outputs/train --output-prefix /home/lfeng/CMAO/outputs/eval/base/aime_base_comparison
