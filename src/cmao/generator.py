@@ -26,7 +26,7 @@ class GeneratorBackend:
         raise NotImplementedError
 
 
-def format_chat_prompt(tokenizer, prompt: str, *, enable_thinking: bool = True) -> str:
+def format_chat_prompt(tokenizer, prompt: str, *, enable_thinking: bool = False) -> str:
     messages = [{"role": "user", "content": prompt.strip()}]
     if hasattr(tokenizer, "apply_chat_template"):
         try:
@@ -81,7 +81,7 @@ class TransformersGeneratorBackend(GeneratorBackend):
         sampling_cfg: SamplingConfig,
         run_metadata: dict[str, Any] | None = None,
     ) -> list[ReasoningSample]:
-        prompt = format_chat_prompt(self.tokenizer, problem.prompt, enable_thinking=True)
+        prompt = format_chat_prompt(self.tokenizer, problem.prompt, enable_thinking=False)
         encoded = self.tokenizer(prompt, return_tensors="pt").to(self.model.device)
         outputs = self.model.generate(
             **encoded,

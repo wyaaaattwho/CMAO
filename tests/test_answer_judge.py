@@ -61,6 +61,8 @@ class AnswerJudgeTest(unittest.TestCase):
 
     def test_placeholder_answer_is_detected(self) -> None:
         self.assertTrue(is_placeholder_answer("The final answer is:"))
+        self.assertTrue(is_placeholder_answer("<number>"))
+        self.assertTrue(is_placeholder_answer('"<answer>"'))
 
     def test_placeholder_final_answer_falls_back_to_raw_text(self) -> None:
         judge = AnswerJudge()
@@ -87,6 +89,12 @@ class AnswerJudgeTest(unittest.TestCase):
         answer, evidence = extract_final_answer_with_evidence(text)
         self.assertEqual(answer, "the solution is x = 7/2")
         self.assertIn(evidence["strategy"], {"conclusion_line", "equation_tail"})
+
+    def test_latex_sqrt_implicit_multiplication_equivalence(self) -> None:
+        self.assertTrue(answers_equivalent("3\\sqrt{2}", "3*sqrt(2)"))
+
+    def test_text_answer_can_be_contained_in_final_sentence(self) -> None:
+        self.assertTrue(answers_equivalent("on June 20, she does 101 sit-ups", "\\text{June 20}"))
 
 
 if __name__ == "__main__":

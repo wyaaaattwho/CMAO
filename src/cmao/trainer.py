@@ -517,10 +517,10 @@ class OnlineGRPOTrainer:
             for problem in problems:
                 prefix_text = (
                     problem.prompt.rstrip()
-                    + "\n\nSolve carefully and end with exactly one line in this format:\n"
-                    + "Final Answer: <number>\n"
+                    + "\n\nSolve the problem concisely. "
+                    + "End with one final line that starts with 'Final Answer:' followed by the answer."
                 )
-                prefix_text = format_chat_prompt(self.tokenizer, prefix_text, enable_thinking=True)
+                prefix_text = format_chat_prompt(self.tokenizer, prefix_text, enable_thinking=False)
                 encoded = self.tokenizer(
                     prefix_text,
                     return_tensors="pt",

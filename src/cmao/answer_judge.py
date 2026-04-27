@@ -30,6 +30,10 @@ PLACEHOLDER_PREFIXES = (
     "hence",
     "so",
 )
+PLACEHOLDER_PATTERNS = (
+    re.compile(r"^<?\s*(?:number|answer|final answer)\s*>?$", re.IGNORECASE),
+    re.compile(r"^['\"]?<?\s*(?:number|answer)\s*>?['\"]?$", re.IGNORECASE),
+)
 
 
 def strip_latex_noise(text: str) -> str:
@@ -63,6 +67,10 @@ def is_placeholder_answer(text: str) -> bool:
     normalized = normalized.strip(" .:;,!-")
     if not normalized:
         return True
+    normalized = normalized.strip("'\"`")
+    for pattern in PLACEHOLDER_PATTERNS:
+        if pattern.match(normalized):
+            return True
     return normalized in PLACEHOLDER_PREFIXES
 
 
@@ -121,6 +129,8 @@ def normalize_math_text(text: str) -> str:
     normalized = normalized.replace("\\cdot", "*")
     normalized = normalized.replace("\\times", "*")
     normalized = re.sub(r"\\sqrt\{([^{}]+)\}", r"sqrt(\1)", normalized)
+    normalized = re.sub(r"\\sqrt\(([^()]+)\)", r"sqrt(\1)", normalized)
+    normalized = re.sub(r"(\d)(sqrt\()", r"\1*\2", normalized)
     normalized = normalized.replace("−", "-")
     normalized = re.sub(r"\\boxed\((.+)\)", r"\1", normalized)
     normalized = re.sub(r"^(?:thefinalansweris|finalansweris|answeris|theansweris)[:=]?", "", normalized)
@@ -220,6 +230,9 @@ def answers_equivalent(predicted: str, gold: str) -> bool:
     gold_norm = normalize_math_text(gold)
     if pred_norm == gold_norm:
         return True
+    if gold_norm and not gold_norm.replace(".", "", 1).replace("-", "", 1).isdigit():
+        if gold_norm.lower() in pred_norm.lower():
+            return True
 
     try:
         import sympy  # type: ignore
