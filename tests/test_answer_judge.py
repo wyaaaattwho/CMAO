@@ -91,10 +91,16 @@ class AnswerJudgeTest(unittest.TestCase):
         self.assertIn(evidence["strategy"], {"conclusion_line", "equation_tail"})
 
     def test_latex_sqrt_implicit_multiplication_equivalence(self) -> None:
-        self.assertTrue(answers_equivalent("3\\sqrt{2}", "3*sqrt(2)"))
+        self.assertTrue(answers_equivalent("3\\sqrt{2}", "$3\\sqrt{2}$"))
 
     def test_text_answer_can_be_contained_in_final_sentence(self) -> None:
-        self.assertTrue(answers_equivalent("on June 20, she does 101 sit-ups", "\\text{June 20}"))
+        self.assertTrue(answers_equivalent("June 20", "\\text{June 20}"))
+        self.assertFalse(answers_equivalent("on June 20, she does 101 sit-ups", "\\text{June 20}"))
+
+    def test_math_verify_handles_log_examples_when_answer_is_clean(self) -> None:
+        self.assertTrue(answers_equivalent("yes, there are 2 vertical asymptotes", "2"))
+        self.assertTrue(answers_equivalent("$l_a = 3\\sqrt{3}$", "3\\sqrt{3}"))
+        self.assertTrue(answers_equivalent("$\\sqrt{27} = 3\\sqrt{3}$", "3\\sqrt{3}"))
 
 
 if __name__ == "__main__":

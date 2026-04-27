@@ -21,6 +21,8 @@ CONCLUSION_PATTERNS = [
 ]
 LATEX_JUNK = [r"\left", r"\right", "$", ",", " "]
 SIMPLE_EXPR_PATTERN = re.compile(r"^[0-9\.\-\+\*/\(\)]+$")
+MATH_VERIFY_ENV_PATTERN = re.compile(r"(?:\$|\\boxed|\\\(|\\\[)")
+MATH_VERIFY_BARE_LATEX_PATTERN = re.compile(r"\\(?:frac|dfrac|tfrac|sqrt|left|right)")
 PLACEHOLDER_PREFIXES = (
     "the final answer is",
     "final answer",
@@ -138,6 +140,29 @@ def normalize_math_text(text: str) -> str:
     return normalized.strip()
 
 
+def _math_verify_input(text: str) -> str:
+    stripped = text.strip()
+    if not stripped or MATH_VERIFY_ENV_PATTERN.search(stripped):
+        return stripped
+    if "\\text" not in stripped and MATH_VERIFY_BARE_LATEX_PATTERN.search(stripped):
+        return f"${stripped}$"
+    return stripped
+
+
+def _math_verify_equivalent(predicted: str, gold: str) -> bool:
+    try:
+        from math_verify import parse, verify  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError(
+            "math-verify is required for answer judging. Install with "
+            "`pip install -e .` or `pip install 'math-verify[antlr4_13_2]>=0.5.0'`."
+        ) from exc
+
+    gold_parsed = parse(_math_verify_input(gold))
+    predicted_parsed = parse(_math_verify_input(predicted))
+    return bool(verify(gold_parsed, predicted_parsed))
+
+
 class _NumericEvaluator(ast.NodeVisitor):
     allowed_nodes = (
         ast.Expression,
@@ -221,30 +246,7 @@ def try_parse_numeric_value(text: str) -> float | None:
 def answers_equivalent(predicted: str, gold: str) -> bool:
     if is_placeholder_answer(predicted):
         return False
-    pred_value = try_parse_numeric_value(predicted)
-    gold_value = try_parse_numeric_value(gold)
-    if pred_value is not None and gold_value is not None:
-        return math.isclose(pred_value, gold_value, rel_tol=1e-6, abs_tol=1e-6)
-
-    pred_norm = normalize_math_text(predicted)
-    gold_norm = normalize_math_text(gold)
-    if pred_norm == gold_norm:
-        return True
-    if gold_norm and not gold_norm.replace(".", "", 1).replace("-", "", 1).isdigit():
-        if gold_norm.lower() in pred_norm.lower():
-            return True
-
-    try:
-        import sympy  # type: ignore
-    except ImportError:
-        return False
-
-    try:
-        pred_expr = sympy.sympify(pred_norm)
-        gold_expr = sympy.sympify(gold_norm)
-        return bool(sympy.simplify(pred_expr - gold_expr) == 0)
-    except Exception:
-        return False
+    return _math_verify_equivalent(predicted, gold)
 
 
 def extract_gold_answer_from_gsm8k(solution: str) -> str:
@@ -290,6 +292,7 @@ class AnswerJudge:
             },
             "judgment_details": {
                 "dataset": problem.source,
+                "judger": "huggingface/math-verify",
                 "equivalent_after_normalization": normalized_predicted == normalized_gold,
                 "post_extraction_mismatch": bool(predicted.strip()) and not is_correct,
                 "nonempty_incorrect": bool(predicted.strip()) and not extraction_placeholder and not is_correct,

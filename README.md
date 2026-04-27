@@ -71,6 +71,7 @@ pip install -e ".[dev]"
 
 当前 `pyproject.toml` 里声明的基础依赖包括：
 
+- `math-verify`
 - `torch`
 - `transformers`
 - `datasets`
@@ -78,7 +79,8 @@ pip install -e ".[dev]"
 
 说明：
 
-- 这几个依赖是为了后续真实采样和数学表达式判定准备的
+- `math-verify` 是答案正确性判定的主路径，训练 reward 和评测会直接调用它的 `parse` / `verify`
+- 其余依赖是为了后续真实采样、训练和辅助数值记录准备的
 - 如果你只是先看代码结构，不必立刻把环境全装完
 - 如果你打算在 Docker 里跑，建议把这些依赖放进镜像里统一安装
 
@@ -96,7 +98,7 @@ python -m unittest discover -s tests -v
 
 - `\boxed{}` 和常见数学答案抽取
 - 更严格的最终答案抽取优先级
-- 分数与小数等价判定
+- 基于 HuggingFace `math-verify` 的分数、小数和 LaTeX 等价判定
 - mode 标签优先级
 - mode 命中证据
 - quality 打分证据
@@ -531,7 +533,7 @@ python scripts/report.py \
 - 在线 GRPO 训练环节仍是轻量实现，未接入 vLLM/Ray/ZeRO-3 等大规模训练基础设施
 - `quality_scorer` 还是启发式，不是 PRM / reward model
 - `mode_tagger` 目前是规则系统，不是学习式分类器
-- 数学表达式判定目前偏保守，复杂 LaTeX 场景还可能需要加强
+- 答案判定直接使用 HuggingFace `math-verify`；如果数据集 gold answer 不是标准数学表达式，最好先把 gold 清洗成它推荐的格式
 - 推理生成后端当前只接了 `transformers`
 
 ## 推荐的使用顺序
