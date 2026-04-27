@@ -17,8 +17,10 @@ class OnlineGRPOConfigTest(unittest.TestCase):
                     "num_iterations": 5,
                     "update_epochs": 2,
                     "max_grad_norm": 0.7,
+                    "gradient_checkpointing": False,
                     "save_rollout_log": False,
                 },
+                "lora": {"autocast_adapter_dtype": True},
                 "cmao": {"lambda_ans": 1.0, "lambda_qual": 0.4, "lambda_mode": 0.1},
             }
         )
@@ -30,6 +32,8 @@ class OnlineGRPOConfigTest(unittest.TestCase):
         self.assertEqual(config.num_iterations, 5)
         self.assertEqual(config.update_epochs, 2)
         self.assertAlmostEqual(config.max_grad_norm, 0.7)
+        self.assertFalse(config.gradient_checkpointing)
+        self.assertTrue(config.lora_autocast_adapter_dtype)
         self.assertFalse(config.save_rollout_log)
         self.assertEqual(config.max_new_tokens, 128)
         self.assertAlmostEqual(config.lambda_qual, 0.4)

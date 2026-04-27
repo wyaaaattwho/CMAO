@@ -368,12 +368,13 @@ cmao train_online_grpo --config configs/training/math500_online_grpo_qwen35_9b_l
 
 注意：训练配置不使用 AIME 2024 或 MATH-500 的评测 split。当前四个在线训练配置都使用 `zzy1123/MATH_train_test_split` 的 `train` split，AIME 2024 和 MATH-500 只出现在 `configs/experiment/` 的测试配置里，避免 train/test 污染。
 
-这些训练配置按 Qwen3.5-9B 在约 80GB 可用显存下做了保守起跑设置，并且 old logprob 计算会按 `mini_batch_size` 分块，避免整批 rollout 一次 forward 造成显存峰值：
+这些训练配置按 Qwen3.5-9B 在约 80GB 可用显存下做了保守起跑设置，并且 old logprob 计算会按 `mini_batch_size` 分块，训练模型会关闭 `use_cache`、开启 gradient checkpointing，并避免 PEFT 把 LoRA adapter 输入自动提升到 fp32：
 
 - `rollout_batch_size=2`
 - `group_size=8`
-- `mini_batch_size=2`
-- `gradient_accumulation_steps=8`
+- `mini_batch_size=1`
+- `gradient_accumulation_steps=16`
+- `max_new_tokens=1536`
 - `update_epochs=1`
 - `learning_rate=3e-7`
 - `kl_coef=0.03`

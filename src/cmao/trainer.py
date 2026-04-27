@@ -51,6 +51,7 @@ class OnlineGRPOConfig:
     kl_coef: float = 0.02
     max_grad_norm: float = 1.0
     bf16: bool = True
+    gradient_checkpointing: bool = True
     logging_steps: int = 1
     save_steps: int = 50
     seed: int = 42
@@ -69,6 +70,7 @@ class OnlineGRPOConfig:
     lora_alpha: int = 32
     lora_dropout: float = 0.05
     lora_target_modules: list[str] | None = None
+    lora_autocast_adapter_dtype: bool = False
     save_rollout_log: bool = True
     max_bad_iterations: int = 0
 
@@ -108,6 +110,7 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         kl_coef=train_cfg.get("kl_coef", 0.02),
         max_grad_norm=train_cfg.get("max_grad_norm", 1.0),
         bf16=train_cfg.get("bf16", True),
+        gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
         logging_steps=train_cfg.get("logging_steps", 1),
         save_steps=train_cfg.get("save_steps", 50),
         max_bad_iterations=train_cfg.get("max_bad_iterations", 0),
@@ -130,6 +133,7 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         lora_alpha=lora_cfg.get("alpha", 32),
         lora_dropout=lora_cfg.get("dropout", 0.05),
         lora_target_modules=lora_cfg.get("target_modules"),
+        lora_autocast_adapter_dtype=lora_cfg.get("autocast_adapter_dtype", False),
         save_rollout_log=train_cfg.get("save_rollout_log", True),
     )
 
@@ -355,10 +359,12 @@ class OnlineGRPOTrainer:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
     def _build_trainable_model(self):
+        load_kwargs = self._model_load_kwargs()
         model = self.AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
-            trust_remote_code=self.config.trust_remote_code,
+            **load_kwargs,
         )
+        self._prepare_model_for_training_memory(model)
         if not self.config.lora_enabled:
             return model
         try:
@@ -373,13 +379,46 @@ class OnlineGRPOTrainer:
             task_type="CAUSAL_LM",
             target_modules=self.config.lora_target_modules,
         )
-        return get_peft_model(model, lora_config)
+        try:
+            model = get_peft_model(
+                model,
+                lora_config,
+                autocast_adapter_dtype=self.config.lora_autocast_adapter_dtype,
+            )
+        except TypeError:
+            model = get_peft_model(model, lora_config)
+        if self.config.gradient_checkpointing and hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        return model
 
     def _build_reference_model(self):
-        return self.AutoModelForCausalLM.from_pretrained(
+        load_kwargs = self._model_load_kwargs()
+        model = self.AutoModelForCausalLM.from_pretrained(
             self.config.model_name,
-            trust_remote_code=self.config.trust_remote_code,
+            **load_kwargs,
         )
+        if hasattr(model, "config"):
+            model.config.use_cache = False
+        return model
+
+    def _model_load_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "trust_remote_code": self.config.trust_remote_code,
+        }
+        if self.config.bf16:
+            kwargs["torch_dtype"] = self.torch.bfloat16
+        return kwargs
+
+    def _prepare_model_for_training_memory(self, model) -> None:
+        if hasattr(model, "config"):
+            model.config.use_cache = False
+        if not self.config.gradient_checkpointing:
+            return
+        if hasattr(model, "gradient_checkpointing_enable"):
+            try:
+                model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+            except TypeError:
+                model.gradient_checkpointing_enable()
 
     def _disable_dropout(self, model) -> None:
         for module in model.modules():
@@ -798,6 +837,7 @@ class OnlineGRPOTrainer:
                 total_policy_loss += breakdown.policy_loss
                 total_kl += breakdown.kl_term
                 total_clip_fraction += breakdown.clip_fraction
+                del current_stats, reference_stats, kl_values, loss, scaled_loss, breakdown, advantages
 
                 if backward_steps % self.config.gradient_accumulation_steps == 0:
                     if self._has_nonfinite_gradients():
@@ -812,6 +852,8 @@ class OnlineGRPOTrainer:
                             "Stopping online GRPO to prevent collapse."
                         )
                     self.optimizer.zero_grad()
+                    if rollout.input_ids.is_cuda:
+                        self.torch.cuda.empty_cache()
                     optimizer_steps += 1
 
         if backward_steps % self.config.gradient_accumulation_steps != 0:
