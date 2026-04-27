@@ -218,6 +218,29 @@ def _pad_1d_tensors(tensors, pad_value: int | float):
     return torch.stack(padded)
 
 
+def _batched_token_logprobs(model, input_ids, attention_mask, batch_size: int):
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("torch is required for online GRPO training.") from exc
+
+    chunks = []
+    safe_batch_size = max(1, int(batch_size))
+    for start in range(0, int(input_ids.shape[0]), safe_batch_size):
+        end = min(start + safe_batch_size, int(input_ids.shape[0]))
+        stats = _forward_response_stats(
+            model,
+            input_ids[start:end],
+            attention_mask[start:end],
+            prompt_lengths=[0 for _ in range(end - start)],
+        )
+        chunks.append(stats["token_logprobs"].detach())
+        del stats
+        if input_ids.is_cuda:
+            torch.cuda.empty_cache()
+    return torch.cat(chunks, dim=0)
+
+
 @dataclass
 class OnlineRolloutBatch:
     input_ids: Any
@@ -638,13 +661,12 @@ class OnlineGRPOTrainer:
             input_ids = _pad_1d_tensors(input_sequences, pad_token_id)
             attention_mask = _pad_1d_tensors(attention_masks, 0)
             response_mask = _pad_1d_tensors(response_masks, 0.0)
-            old_stats = _forward_response_stats(
+            old_token_logprobs = _batched_token_logprobs(
                 unwrapped_model,
                 input_ids,
                 attention_mask,
-                prompt_lengths=[0 for _ in range(int(input_ids.shape[0]))],
+                batch_size=self.config.mini_batch_size,
             )
-            old_token_logprobs = old_stats["token_logprobs"].detach()
 
         advantages = []
         correct = []
