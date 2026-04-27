@@ -366,15 +366,21 @@ cmao train_online_grpo --config configs/training/math500_online_grpo_qwen35_9b_l
 
 注意：训练配置不使用 AIME 2024 或 MATH-500 的评测 split。当前四个在线训练配置都使用 `zzy1123/MATH_train_test_split` 的 `train` split，AIME 2024 和 MATH-500 只出现在 `configs/experiment/` 的测试配置里，避免 train/test 污染。
 
-这些训练配置按 H20 144GB 单卡做了更稳的起跑设置，并且 old logprob 计算会按 `mini_batch_size` 分块，避免整批 rollout 一次 forward 造成显存峰值：
+这些训练配置按 Qwen3.5-9B 在约 80GB 可用显存下做了保守起跑设置，并且 old logprob 计算会按 `mini_batch_size` 分块，避免整批 rollout 一次 forward 造成显存峰值：
 
-- `rollout_batch_size=4`
+- `rollout_batch_size=2`
 - `group_size=8`
-- `mini_batch_size=4`
+- `mini_batch_size=2`
 - `gradient_accumulation_steps=8`
 - `update_epochs=1`
 - `learning_rate=3e-7`
 - `kl_coef=0.03`
+
+如果显存碎片导致 OOM，建议运行前设置：
+
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
 
 底层使用 `Transformers + Accelerate + PEFT`，默认训练方式是 `LoRA`。采样与更新在同一个在线循环里完成，不再支持旧的离线 replay 训练入口。
 
