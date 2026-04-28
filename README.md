@@ -404,26 +404,42 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 pip install -e ".[plot]"
 ```
 
-训练完成或训练中都可以画图：
+训练完成或训练中都可以画图。脚本会为每个独立指标各保存一张图，默认使用轻微平滑、不标注采样点：
 
 ```bash
 python scripts/plot_training_metrics.py \
   --input outputs/train/math500_online_cmao_qwen35_9b_lora/online_metrics.jsonl \
-  --output outputs/train/math500_online_cmao_qwen35_9b_lora/metrics.png
+  --output-dir outputs/train/math500_online_cmao_qwen35_9b_lora/figures
 ```
 
-默认图里会画三组曲线：
-
-- reward/advantage：`weighted_reward_mean`、`a_total_abs_mean`、`a_ans_mean`、`a_qual_mean`、`a_mode_mean`
-- optimization：`loss`、`policy_loss`、`kl`、`clip_fraction`
-- rollout：`correct_ratio`、`nonzero_advantage_ratio`、`truncated_completion_ratio`
-
-GRPO baseline 也一样：
+也可以把两个或更多训练过程画到同一组图里。每张图对应一个指标，每根线对应一个实验：
 
 ```bash
 python scripts/plot_training_metrics.py \
-  --input outputs/train/math500_online_grpo_qwen35_9b_lora/online_metrics.jsonl \
-  --output outputs/train/math500_online_grpo_qwen35_9b_lora/metrics.png
+  --inputs \
+    outputs/train/math500_online_cmao_qwen35_9b_lora/online_metrics.jsonl \
+    outputs/train/math500_online_grpo_qwen35_9b_lora/online_metrics.jsonl \
+  --labels CMAO GRPO \
+  --output-dir outputs/train/math500_compare_figures
+```
+
+默认会绘制这些常用指标，若日志里还有其他数值字段也会自动补上：
+
+- reward/advantage：`weighted_reward_mean`、`weighted_reward_std`、`a_total_abs_mean`、`a_ans_mean`、`a_qual_mean`、`a_mode_mean`
+- optimization：`loss`、`policy_loss`、`kl`、`clip_fraction`
+- rollout：`correct_ratio`、`correct_count`、`nonzero_advantage_ratio`、`zero_advantage_group_count`、`truncated_completion_ratio`、`response_tokens_mean`
+
+如果只想画指定指标：
+
+```bash
+python scripts/plot_training_metrics.py \
+  --inputs \
+    outputs/train/math500_online_cmao_qwen35_9b_lora/online_metrics.jsonl \
+    outputs/train/math500_online_grpo_qwen35_9b_lora/online_metrics.jsonl \
+  --labels CMAO GRPO \
+  --metrics correct_ratio kl response_tokens_mean \
+  --smooth 9 \
+  --output-dir outputs/train/math500_compare_figures
 ```
 
 ### `report`
