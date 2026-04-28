@@ -5,7 +5,7 @@
   "dataset": {
     "name": "math-500",
     "split": "test",
-    "limit": 500
+    "limit": 100
   },
   "sampling": {
     "group_size": 16,
