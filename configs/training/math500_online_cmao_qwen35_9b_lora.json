@@ -6,7 +6,7 @@
   "dataset": {
     "name": "zzy1123/MATH_train_test_split",
     "split": "train",
-    "limit": 200
+    "limit": 400
   },
   "sampling": {
     "group_size": 8,
@@ -18,13 +18,13 @@
     "do_sample": true
   },
   "training": {
-    "output_dir": "outputs/train/math500_online_cmao_qwen35_9b_lora",
-    "learning_rate": 0.0000003,
+    "output_dir": "outputs/train/math500_online_cmao_qwen35_9b_lora_v2",
+    "learning_rate": 0.000001,
     "weight_decay": 0.0,
-    "rollout_batch_size": 1,
-    "mini_batch_size": 1,
-    "gradient_accumulation_steps": 8,
-    "num_iterations": 200,
+    "rollout_batch_size": 8,
+    "mini_batch_size": 2,
+    "gradient_accumulation_steps":64,
+    "num_iterations": 50,
     "max_bad_iterations": 30,
     "update_epochs": 1,
     "max_length": 4096,
