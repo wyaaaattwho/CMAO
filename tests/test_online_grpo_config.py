@@ -9,13 +9,17 @@ class OnlineGRPOConfigTest(unittest.TestCase):
             {
                 "model": {"name": "test-model", "trust_remote_code": False},
                 "dataset": {"name": "gsm8k", "split": "train", "limit": 8},
-                "sampling": {"group_size": 6, "max_new_tokens": 128, "temperature": 0.8},
+                "sampling": {"num_generations": 6, "max_completion_length": 128, "temperature": 0.8},
                 "training": {
                     "output_dir": "outputs/test-online",
-                    "rollout_batch_size": 2,
-                    "mini_batch_size": 3,
-                    "num_iterations": 5,
-                    "update_epochs": 2,
+                    "generation_batch_size": 12,
+                    "per_device_train_batch_size": 3,
+                    "gradient_accumulation_steps": 4,
+                    "max_steps": 5,
+                    "num_iterations": 2,
+                    "epsilon": 0.18,
+                    "beta": 0.01,
+                    "loss_type": "dapo",
                     "max_grad_norm": 0.7,
                     "gradient_checkpointing": False,
                     "save_rollout_log": False,
@@ -29,8 +33,12 @@ class OnlineGRPOConfigTest(unittest.TestCase):
         self.assertEqual(config.rollout_batch_size, 2)
         self.assertEqual(config.group_size, 6)
         self.assertEqual(config.mini_batch_size, 3)
+        self.assertEqual(config.gradient_accumulation_steps, 4)
         self.assertEqual(config.num_iterations, 5)
         self.assertEqual(config.update_epochs, 2)
+        self.assertAlmostEqual(config.clip_range, 0.18)
+        self.assertAlmostEqual(config.kl_coef, 0.01)
+        self.assertEqual(config.loss_type, "dapo")
         self.assertAlmostEqual(config.max_grad_norm, 0.7)
         self.assertFalse(config.gradient_checkpointing)
         self.assertTrue(config.lora_autocast_adapter_dtype)

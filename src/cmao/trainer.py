@@ -49,6 +49,7 @@ class OnlineGRPOConfig:
     do_sample: bool = True
     clip_range: float = 0.2
     kl_coef: float = 0.02
+    loss_type: str = "dapo"
     max_grad_norm: float = 1.0
     bf16: bool = True
     gradient_checkpointing: bool = True
@@ -83,6 +84,22 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
     cmao_cfg = dict(config.get("cmao", {}))
     scoring_cfg = dict(config.get("scoring", {}))
     lora_cfg = dict(config.get("lora", {}))
+    num_generations = int(sampling_cfg["num_generations"])
+    generation_batch_size = int(train_cfg["generation_batch_size"])
+    if generation_batch_size % num_generations != 0:
+        raise ValueError("generation_batch_size must be divisible by sampling.num_generations.")
+    per_device_train_batch_size = int(train_cfg["per_device_train_batch_size"])
+    gradient_accumulation_steps = int(train_cfg["gradient_accumulation_steps"])
+    effective_train_batch_size = per_device_train_batch_size * gradient_accumulation_steps
+    if generation_batch_size != effective_train_batch_size:
+        raise ValueError(
+            "For this GRPO implementation, generation_batch_size must equal "
+            "per_device_train_batch_size * gradient_accumulation_steps so that "
+            "one generation batch maps to one optimizer step."
+        )
+    max_steps = int(train_cfg["max_steps"])
+    update_epochs = int(train_cfg.get("num_iterations", 1))
+    max_completion_length = int(sampling_cfg["max_completion_length"])
     return OnlineGRPOConfig(
         model_name=model_cfg["name"],
         output_dir=train_cfg["output_dir"],
@@ -93,21 +110,22 @@ def online_grpo_config_from_dict(config: dict[str, Any]) -> OnlineGRPOConfig:
         dataset_config_name=dataset_cfg.get("config_name"),
         learning_rate=train_cfg.get("learning_rate", 1e-6),
         weight_decay=train_cfg.get("weight_decay", 0.0),
-        rollout_batch_size=train_cfg.get("rollout_batch_size", train_cfg.get("batch_size", 1)),
-        group_size=sampling_cfg.get("group_size", train_cfg.get("group_size", 4)),
-        mini_batch_size=train_cfg.get("mini_batch_size", sampling_cfg.get("group_size", 4)),
-        gradient_accumulation_steps=train_cfg.get("gradient_accumulation_steps", 1),
-        num_iterations=train_cfg.get("num_iterations", train_cfg.get("max_steps", 1)),
-        update_epochs=train_cfg.get("update_epochs", 1),
-        max_new_tokens=sampling_cfg.get("max_new_tokens", 512),
+        rollout_batch_size=generation_batch_size // num_generations,
+        group_size=num_generations,
+        mini_batch_size=per_device_train_batch_size,
+        gradient_accumulation_steps=gradient_accumulation_steps,
+        num_iterations=max_steps,
+        update_epochs=update_epochs,
+        max_new_tokens=max_completion_length,
         max_length=train_cfg.get("max_length", 2048),
         temperature=sampling_cfg.get("temperature", 0.6),
         top_p=sampling_cfg.get("top_p", 0.95),
         repetition_penalty=sampling_cfg.get("repetition_penalty", 1.05),
         no_repeat_ngram_size=sampling_cfg.get("no_repeat_ngram_size", 3),
         do_sample=sampling_cfg.get("do_sample", True),
-        clip_range=train_cfg.get("clip_range", 0.2),
-        kl_coef=train_cfg.get("kl_coef", 0.02),
+        clip_range=train_cfg.get("epsilon", 0.2),
+        kl_coef=train_cfg.get("beta", 0.0),
+        loss_type=train_cfg.get("loss_type", "dapo"),
         max_grad_norm=train_cfg.get("max_grad_norm", 1.0),
         bf16=train_cfg.get("bf16", True),
         gradient_checkpointing=train_cfg.get("gradient_checkpointing", True),
@@ -310,23 +328,30 @@ class OnlineGRPOTrainer:
             self.tokenizer.pad_token = self.tokenizer.eos_token
 
         self.model = self._build_trainable_model()
-        self.reference_model = self._build_reference_model()
+        self.reference_model = self._build_reference_model() if self.config.kl_coef > 0.0 else None
         self._disable_dropout(self.model)
-        self._disable_dropout(self.reference_model)
-        self.reference_model.eval()
-        for parameter in self.reference_model.parameters():
-            parameter.requires_grad = False
+        if self.reference_model is not None:
+            self._disable_dropout(self.reference_model)
+            self.reference_model.eval()
+            for parameter in self.reference_model.parameters():
+                parameter.requires_grad = False
 
         self.optimizer = self.AdamW(
             (parameter for parameter in self.model.parameters() if parameter.requires_grad),
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
         )
-        self.model, self.reference_model, self.optimizer = self.accelerator.prepare(
-            self.model,
-            self.reference_model,
-            self.optimizer,
-        )
+        if self.reference_model is None:
+            self.model, self.optimizer = self.accelerator.prepare(
+                self.model,
+                self.optimizer,
+            )
+        else:
+            self.model, self.reference_model, self.optimizer = self.accelerator.prepare(
+                self.model,
+                self.reference_model,
+                self.optimizer,
+            )
 
         self.answer_judge = AnswerJudge()
         self.quality_scorer = QualityScorer(
@@ -479,20 +504,34 @@ class OnlineGRPOTrainer:
 
             record = {
                 "iteration": iteration + 1,
+                "step": iteration + 1,
                 "optimizer_step": optimizer_step,
                 "sample_count": int(rollout.input_ids.shape[0]),
+                "num_generations": self.config.group_size,
+                "generation_batch_size": int(rollout.input_ids.shape[0]),
+                "per_device_train_batch_size": self.config.mini_batch_size,
                 "correct_ratio": float(rollout.correct.mean().item()),
                 "correct_count": int(rollout.correct.sum().item()),
                 "quality_score_mean": float(rollout.quality_score.mean().item()),
+                "reward/answer/mean": float(rollout.a_ans.mean().item()),
+                "reward/quality/mean": float(rollout.a_qual.mean().item()),
+                "reward/mode/mean": float(rollout.a_mode.mean().item()),
+                "reward": float(weighted_rewards.mean().item()),
+                "reward_std": float(weighted_rewards.std(unbiased=False).item()),
                 "a_ans_mean": float(rollout.a_ans.mean().item()),
                 "a_qual_mean": float(rollout.a_qual.mean().item()),
                 "a_mode_mean": float(rollout.a_mode.mean().item()),
                 "weighted_reward_mean": float(weighted_rewards.mean().item()),
                 "weighted_reward_std": float(weighted_rewards.std(unbiased=False).item()),
+                "advantages/mean_abs": float(rollout.a_total.abs().mean().item()),
                 "a_total_abs_mean": float(rollout.a_total.abs().mean().item()),
+                "frac_reward_zero_std": rollout.diagnostics["frac_reward_zero_std"],
                 "nonzero_advantage_ratio": float((rollout.a_total.abs() > 1e-8).float().mean().item()),
                 "zero_advantage_group_count": rollout.diagnostics["zero_advantage_group_count"],
                 "truncated_completion_ratio": rollout.diagnostics["truncated_completion_ratio"],
+                "completions/mean_length": rollout.diagnostics["response_tokens_mean"],
+                "completions/max_length": rollout.diagnostics["response_tokens_max"],
+                "completions/clipped_ratio": rollout.diagnostics["truncated_completion_ratio"],
                 "response_tokens_mean": rollout.diagnostics["response_tokens_mean"],
                 "problem_ids": rollout.diagnostics["problem_ids"],
                 **update_summary,
@@ -764,6 +803,7 @@ class OnlineGRPOTrainer:
             "response_tokens_max": int(response_mask.sum(dim=-1).max().item()),
             "nonzero_advantage_count": sum(1 for value in a_total_values if abs(value) > 1e-8),
             "zero_advantage_group_count": zero_advantage_group_count,
+            "frac_reward_zero_std": zero_advantage_group_count / max(1, len(rollout_groups)),
             "truncated_completion_ratio": truncated_completion_count / max(1, completion_count),
             "a_total_abs_mean": sum(abs(value) for value in a_total_values) / max(1, len(a_total_values)),
             "groups": rollout_groups,
@@ -786,12 +826,18 @@ class OnlineGRPOTrainer:
 
     def _update_from_rollout(self, rollout: OnlineRolloutBatch) -> dict[str, Any]:
         self.model.train()
-        unwrapped_reference_model = self.accelerator.unwrap_model(self.reference_model)
+        unwrapped_reference_model = (
+            self.accelerator.unwrap_model(self.reference_model)
+            if self.reference_model is not None
+            else None
+        )
         num_samples = int(rollout.input_ids.shape[0])
         total_loss = 0.0
         total_policy_loss = 0.0
         total_kl = 0.0
-        total_clip_fraction = 0.0
+        total_clip_region = 0.0
+        total_clip_low = 0.0
+        total_clip_high = 0.0
         backward_steps = 0
         optimizer_steps = 0
         self.optimizer.zero_grad()
@@ -806,17 +852,23 @@ class OnlineGRPOTrainer:
                     rollout.attention_mask[indices],
                     prompt_lengths=[0 for _ in range(int(indices.shape[0]))],
                 )
-                with self.torch.no_grad():
-                    reference_stats = _forward_response_stats(
-                        unwrapped_reference_model,
-                        rollout.input_ids[indices],
-                        rollout.attention_mask[indices],
-                        prompt_lengths=[0 for _ in range(int(indices.shape[0]))],
-                    )
+                reference_stats = None
+                if unwrapped_reference_model is not None:
+                    with self.torch.no_grad():
+                        reference_stats = _forward_response_stats(
+                            unwrapped_reference_model,
+                            rollout.input_ids[indices],
+                            rollout.attention_mask[indices],
+                            prompt_lengths=[0 for _ in range(int(indices.shape[0]))],
+                        )
                 advantages = rollout.a_total[indices]
-                kl_values = _sampled_token_kl(
-                    current_token_logprobs=current_stats["token_logprobs"],
-                    reference_token_logprobs=reference_stats["token_logprobs"],
+                kl_values = (
+                    _sampled_token_kl(
+                        current_token_logprobs=current_stats["token_logprobs"],
+                        reference_token_logprobs=reference_stats["token_logprobs"],
+                    )
+                    if reference_stats is not None
+                    else None
                 )
                 loss, breakdown = cmao_clipped_policy_loss(
                     current_logprobs=current_stats["token_logprobs"],
@@ -824,8 +876,10 @@ class OnlineGRPOTrainer:
                     advantages=advantages,
                     kl_values=kl_values,
                     response_mask=rollout.response_mask[indices],
-                    clip_range=self.config.clip_range,
-                    kl_coef=self.config.kl_coef,
+                    epsilon=self.config.clip_range,
+                    beta=self.config.kl_coef,
+                    loss_type=self.config.loss_type,
+                    max_completion_length=self.config.max_new_tokens,
                 )
                 scaled_loss = loss / self.config.gradient_accumulation_steps
                 if not self.torch.isfinite(loss):
@@ -836,7 +890,9 @@ class OnlineGRPOTrainer:
                 total_loss += breakdown.total_loss
                 total_policy_loss += breakdown.policy_loss
                 total_kl += breakdown.kl_term
-                total_clip_fraction += breakdown.clip_fraction
+                total_clip_region += breakdown.clip_ratio_region_mean
+                total_clip_low += breakdown.clip_ratio_low_mean
+                total_clip_high += breakdown.clip_ratio_high_mean
                 del current_stats, reference_stats, kl_values, loss, scaled_loss, breakdown, advantages
 
                 if backward_steps % self.config.gradient_accumulation_steps == 0:
@@ -864,6 +920,9 @@ class OnlineGRPOTrainer:
                     "policy_loss": 0.0,
                     "kl": 0.0,
                     "clip_fraction": 0.0,
+                    "clip_ratio/region_mean": 0.0,
+                    "clip_ratio/low_mean": 0.0,
+                    "clip_ratio/high_mean": 0.0,
                     "backward_steps": 0,
                     "optimizer_steps": 0,
                 }
@@ -883,7 +942,10 @@ class OnlineGRPOTrainer:
             "loss": total_loss / denom,
             "policy_loss": total_policy_loss / denom,
             "kl": total_kl / denom,
-            "clip_fraction": total_clip_fraction / denom,
+            "clip_fraction": total_clip_region / denom,
+            "clip_ratio/region_mean": total_clip_region / denom,
+            "clip_ratio/low_mean": total_clip_low / denom,
+            "clip_ratio/high_mean": total_clip_high / denom,
             "backward_steps": backward_steps,
             "optimizer_steps": optimizer_steps,
         }
@@ -903,11 +965,18 @@ class OnlineGRPOTrainer:
             "training_mode": "online_grpo",
             "model_name": self.config.model_name,
             "output_dir": str(output_dir),
-            "rollout_step": rollout_step,
+            "step": rollout_step,
+            "max_steps": self.config.num_iterations,
             "optimizer_step": optimizer_step,
-            "group_size": self.config.group_size,
-            "rollout_batch_size": self.config.rollout_batch_size,
-            "update_epochs": self.config.update_epochs,
+            "num_generations": self.config.group_size,
+            "generation_batch_size": self.config.rollout_batch_size * self.config.group_size,
+            "per_device_train_batch_size": self.config.mini_batch_size,
+            "gradient_accumulation_steps": self.config.gradient_accumulation_steps,
+            "num_iterations": self.config.update_epochs,
+            "epsilon": self.config.clip_range,
+            "beta": self.config.kl_coef,
+            "loss_type": self.config.loss_type,
+            "max_completion_length": self.config.max_new_tokens,
             "lambda_ans": self.config.lambda_ans,
             "lambda_qual": self.config.lambda_qual,
             "lambda_mode": self.config.lambda_mode,
