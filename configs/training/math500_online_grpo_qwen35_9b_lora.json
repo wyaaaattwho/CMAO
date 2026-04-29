@@ -6,37 +6,37 @@
   "dataset": {
     "name": "zzy1123/MATH_train_test_split",
     "split": "train",
-    "limit": 400
+    "limit": 200
   },
   "sampling": {
     "group_size": 8,
-    "temperature": 0.6,
+    "temperature": 0.7,
     "top_p": 0.95,
-    "repetition_penalty": 1.05,
+    "repetition_penalty": 1.0,
     "no_repeat_ngram_size": 0,
     "max_new_tokens": 2048,
     "do_sample": true
   },
   "training": {
-    "output_dir": "outputs/train/math500_online_grpo_qwen35_9b_lora_v2",
-    "learning_rate": 0.000001,
+    "output_dir": "outputs/train/math500_online_grpo_qwen35_9b_lora_v4",
+    "learning_rate": 1e-6,
     "weight_decay": 0.0,
     "rollout_batch_size": 8,
-    "mini_batch_size": 2,
-    "gradient_accumulation_steps": 64,
-    "num_iterations": 50,
+    "mini_batch_size": 8,
+    "gradient_accumulation_steps": 8,
+    "num_iterations": 200,
     "max_bad_iterations": 30,
     "update_epochs": 1,
     "max_length": 4096,
     "clip_range": 0.2,
-    "kl_coef": 0.03,
+    "kl_coef": 0.001,
     "max_grad_norm": 1.0,
     "bf16": true,
     "gradient_checkpointing": true,
     "logging_steps": 1,
-    "eval_steps": 100,
+    "eval_steps": 25,
     "save_rollout_log": true,
-    "save_steps": 100,
+    "save_steps": 50,
     "seed": 42
   },
   "scoring": {
