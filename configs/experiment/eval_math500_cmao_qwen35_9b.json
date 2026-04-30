@@ -1,6 +1,6 @@
 {
   "model": {
-    "name": "outputs/merged/math500_online_cmao_qwen35_9b_lora"
+    "name": "outputs/merged/math500_online_cmao_qwen35_9b_lora_v4"
   },
   "dataset": {
     "name": "math-500",
