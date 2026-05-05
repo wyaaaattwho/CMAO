@@ -14,7 +14,7 @@ VAL_FILE=${VAL_FILE:-"${ROOT_DIR}/data/swift_math500/val.jsonl"}
 NPROC_PER_NODE=${NPROC_PER_NODE:-1}
 CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
 
-TRAIN_TYPE=${TRAIN_TYPE:-lora}
+TUNER_TYPE=${TUNER_TYPE:-${TRAIN_TYPE:-lora}}
 LORA_RANK=${LORA_RANK:-16}
 LORA_ALPHA=${LORA_ALPHA:-32}
 TARGET_MODULES=${TARGET_MODULES:-all-linear}
@@ -28,6 +28,7 @@ LEARNING_RATE=${LEARNING_RATE:-1e-6}
 MAX_STEPS=${MAX_STEPS:-100}
 SAVE_STEPS=${SAVE_STEPS:-25}
 LOGGING_STEPS=${LOGGING_STEPS:-1}
+EVAL_STRATEGY=${EVAL_STRATEGY:-no}
 WARMUP_RATIO=${WARMUP_RATIO:-0.0}
 TEMPERATURE=${TEMPERATURE:-1.0}
 
@@ -62,7 +63,7 @@ CMD=(
     --val_dataset "${VAL_FILE}"
     --external_plugins "${CMAO_PLUGIN}"
     --reward_funcs cmao
-    --train_type "${TRAIN_TYPE}"
+    --tuner_type "${TUNER_TYPE}"
     --lora_rank "${LORA_RANK}"
     --lora_alpha "${LORA_ALPHA}"
     --target_modules "${TARGET_MODULES}"
@@ -77,6 +78,7 @@ CMD=(
     --save_steps "${SAVE_STEPS}"
     --save_total_limit 2
     --logging_steps "${LOGGING_STEPS}"
+    --eval_strategy "${EVAL_STRATEGY}"
     --warmup_ratio "${WARMUP_RATIO}"
     --temperature "${TEMPERATURE}"
     --output_dir "${OUTPUT_DIR}"
