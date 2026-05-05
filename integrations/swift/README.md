@@ -48,10 +48,24 @@ MODEL_PATH=Qwen/Qwen3.5-9B \
 CUDA_VISIBLE_DEVICES=0 \
 NPROC_PER_NODE=1 \
 USE_VLLM=false \
-bash scripts/train_swift_cmao_grpo_math.sh
+bash scripts/train_swift_cmao_math.sh
 ```
 
-The default launcher starts with Swift's PyTorch/Transformers backend
+For an answer-only GRPO baseline:
+
+```bash
+MODEL_PATH=Qwen/Qwen3.5-9B \
+CUDA_VISIBLE_DEVICES=0 \
+NPROC_PER_NODE=1 \
+USE_VLLM=false \
+bash scripts/train_swift_grpo_math.sh
+```
+
+The old `scripts/train_verl_cmao_math.sh` and `scripts/train_verl_grpo_math.sh`
+names are kept as compatibility wrappers, but they now call the Swift launcher
+and do not import or execute verl.
+
+The default launchers start with Swift's PyTorch/Transformers backend
 (`USE_VLLM=false`) to avoid the CUDA IPC issues seen in the `verl` rollout path.
 After the base path is stable, enable Swift colocated vLLM with:
 

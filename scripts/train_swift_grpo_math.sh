@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 set -xeuo pipefail
 
-# Compatibility entrypoint: the old name is kept, but training now uses
-# Qwen's ms-swift GRPO stack instead of verl.
 ROOT_DIR=${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}
 
 export CMAO_LAMBDA_ANS=${CMAO_LAMBDA_ANS:-1.0}

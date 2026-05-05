@@ -55,7 +55,7 @@ MODEL_PATH=Qwen/Qwen3.5-9B \
 CUDA_VISIBLE_DEVICES=0 \
 NPROC_PER_NODE=1 \
 USE_VLLM=false \
-bash scripts/train_swift_cmao_grpo_math.sh
+bash scripts/train_swift_cmao_math.sh
 ```
 
 See `integrations/swift/README.md` for the dataset format, reward environment
