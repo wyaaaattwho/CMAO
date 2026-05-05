@@ -1,6 +1,6 @@
 {
   "model": {
-    "name": "outputs/merged/math500_online_grpo_qwen35_9b_lora_v4"
+    "name": "outputs/merged/math500_online_grpo_qwen35_9b_lora_v9"
   },
   "dataset": {
     "name": "math-500",
