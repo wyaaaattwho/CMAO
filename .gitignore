@@ -29,3 +29,6 @@ nohup.out
 
 # Local generated figures
 reasoning_mode_distribution.png
+
+# Data
+data/*
