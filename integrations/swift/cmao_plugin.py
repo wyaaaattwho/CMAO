@@ -18,7 +18,7 @@ from cmao.quality_scorer import QualityScorer
 from cmao.types import ProblemRecord, ReasoningSample
 
 try:
-    from swift.plugin import ORM, orms
+    from swift.rewards import ORM, orms
 except ImportError:  # Allows local syntax/unit checks without ms-swift installed.
     class ORM:  # type: ignore[no-redef]
         pass
@@ -105,7 +105,8 @@ class CMAORewardFunction(ORM):
     correct-mode diversity signals here.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, args: Any | None = None, **_: Any) -> None:
+        self.args = args
         self.lambda_ans = _env_float("CMAO_LAMBDA_ANS", 1.0)
         self.lambda_qual = _env_float("CMAO_LAMBDA_QUAL", 0.4)
         self.lambda_mode = _env_float("CMAO_LAMBDA_MODE", 0.1)
