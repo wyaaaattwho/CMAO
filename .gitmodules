@@ -1,3 +1,6 @@
 [submodule "third_party/verl"]
 	path = third_party/verl
 	url = https://github.com/verl-project/verl.git
+[submodule "third_party/ms-swift"]
+	path = third_party/ms-swift
+	url = https://github.com/modelscope/ms-swift.git

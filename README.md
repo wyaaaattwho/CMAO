@@ -41,3 +41,22 @@ Example:
 ```bash
 cmao train_online_grpo --config configs/training/math500_online_cmao_qwen35_9b_lora.json
 ```
+
+## Qwen3.5 via ms-swift
+
+The recommended Qwen3.5 path is the official ModelScope Swift stack rather than
+the experimental `verl` rollout integration. The Swift integration keeps CMAO as
+a custom GRPO reward plugin:
+
+```bash
+python scripts/prepare_swift_math_data.py
+
+MODEL_PATH=Qwen/Qwen3.5-9B \
+CUDA_VISIBLE_DEVICES=0 \
+NPROC_PER_NODE=1 \
+USE_VLLM=false \
+bash scripts/train_swift_cmao_grpo_math.sh
+```
+
+See `integrations/swift/README.md` for the dataset format, reward environment
+variables, and the optional colocated vLLM mode.
