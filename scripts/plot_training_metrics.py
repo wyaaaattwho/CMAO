@@ -103,14 +103,17 @@ def load_metrics(path: str | Path) -> list[dict[str, Any]]:
             return normalize_records(records)
 
     records: list[dict[str, Any]] = []
+    embedded_log_history: list[dict[str, Any]] = []
     decoder = json.JSONDecoder()
     for line in text.splitlines():
         record = _decode_json_object_from_line(line, decoder)
         if record is not None:
             if "log_history" in record and isinstance(record["log_history"], list):
-                records.extend(item for item in record["log_history"] if isinstance(item, dict))
+                embedded_log_history.extend(item for item in record["log_history"] if isinstance(item, dict))
             elif _looks_like_metric_record(record):
                 records.append(record)
+    if not records and embedded_log_history:
+        records = embedded_log_history
     if not records:
         raise ValueError(f"No metrics found in {path}")
     return normalize_records(records)
@@ -186,8 +189,7 @@ def numeric_series(records: list[dict[str, Any]], key: str) -> list[float] | Non
 
 
 def metric_xy_series(records: list[dict[str, Any]], metric_key: str, x_key: str) -> tuple[list[float], list[float]]:
-    x_values: list[float] = []
-    y_values: list[float] = []
+    pairs_by_x: dict[float, float] = {}
     fallback_index = 1
     for record in records:
         y_value = record.get(metric_key)
@@ -196,12 +198,13 @@ def metric_xy_series(records: list[dict[str, Any]], metric_key: str, x_key: str)
             continue
         x_value = record.get(x_key)
         if isinstance(x_value, (int, float)) and math.isfinite(float(x_value)):
-            x_values.append(float(x_value))
+            x_coord = float(x_value)
         else:
-            x_values.append(float(fallback_index))
-        y_values.append(float(y_value))
+            x_coord = float(fallback_index)
+        pairs_by_x[x_coord] = float(y_value)
         fallback_index += 1
-    return x_values, y_values
+    pairs = sorted(pairs_by_x.items())
+    return [x_value for x_value, _ in pairs], [y_value for _, y_value in pairs]
 
 
 def available_numeric_metrics(runs: Iterable[RunMetrics], x_key: str) -> list[str]:
