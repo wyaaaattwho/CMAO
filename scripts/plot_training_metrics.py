@@ -10,11 +10,25 @@ from typing import Any, Iterable
 
 
 DEFAULT_METRICS = (
+    "reward",
+    "reward_std",
+    "rewards/CMAORewardFunction/mean",
+    "rewards/CMAORewardFunction/std",
+    "frac_reward_zero_std",
+    "completions/mean_length",
+    "completions/min_length",
+    "completions/max_length",
+    "completions/clipped_ratio",
+    "kl",
+    "loss",
+    "grad_norm",
+    "learning_rate",
+    "clip_ratio/low_mean",
+    "clip_ratio/high_mean",
+    "clip_ratio/region_mean",
     "correct_ratio",
     "correct_count",
-    "loss",
     "policy_loss",
-    "kl",
     "clip_fraction",
     "weighted_reward_mean",
     "weighted_reward_std",
@@ -31,6 +45,22 @@ DEFAULT_METRICS = (
 )
 
 METRIC_LABELS = {
+    "step": "Step",
+    "iteration": "Iteration",
+    "reward": "Reward",
+    "reward_std": "Reward Std",
+    "rewards/CMAORewardFunction/mean": "CMAO Reward Mean",
+    "rewards/CMAORewardFunction/std": "CMAO Reward Std",
+    "frac_reward_zero_std": "Zero-Std Reward Fraction",
+    "completions/mean_length": "Completion Mean Length",
+    "completions/min_length": "Completion Min Length",
+    "completions/max_length": "Completion Max Length",
+    "completions/clipped_ratio": "Completion Clipped Ratio",
+    "grad_norm": "Gradient Norm",
+    "learning_rate": "Learning Rate",
+    "clip_ratio/low_mean": "Low Clip Ratio",
+    "clip_ratio/high_mean": "High Clip Ratio",
+    "clip_ratio/region_mean": "Clip Region Ratio",
     "correct_ratio": "Correct Ratio",
     "correct_count": "Correct Count",
     "loss": "Loss",
@@ -60,15 +90,89 @@ class RunMetrics:
 
 
 def load_metrics(path: str | Path) -> list[dict[str, Any]]:
+    source = Path(path)
+    text = source.read_text(encoding="utf-8")
+    stripped_text = text.strip()
+    if not stripped_text:
+        raise ValueError(f"No metrics found in {path}")
+
+    whole_document = _load_whole_json_document(stripped_text)
+    if whole_document is not None:
+        records = _records_from_json_document(whole_document)
+        if records:
+            return normalize_records(records)
+
     records: list[dict[str, Any]] = []
-    with Path(path).open("r", encoding="utf-8") as handle:
-        for line in handle:
-            stripped = line.strip()
-            if stripped:
-                records.append(json.loads(stripped))
+    decoder = json.JSONDecoder()
+    for line in text.splitlines():
+        record = _decode_json_object_from_line(line, decoder)
+        if record is not None:
+            if "log_history" in record and isinstance(record["log_history"], list):
+                records.extend(item for item in record["log_history"] if isinstance(item, dict))
+            elif _looks_like_metric_record(record):
+                records.append(record)
     if not records:
         raise ValueError(f"No metrics found in {path}")
-    return records
+    return normalize_records(records)
+
+
+def _load_whole_json_document(text: str) -> Any | None:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def _records_from_json_document(document: Any) -> list[dict[str, Any]]:
+    if isinstance(document, list):
+        return [item for item in document if isinstance(item, dict)]
+    if isinstance(document, dict):
+        log_history = document.get("log_history")
+        if isinstance(log_history, list):
+            return [item for item in log_history if isinstance(item, dict)]
+        if _looks_like_metric_record(document):
+            return [document]
+    return []
+
+
+def _decode_json_object_from_line(line: str, decoder: json.JSONDecoder) -> dict[str, Any] | None:
+    start = line.find("{")
+    while start != -1:
+        try:
+            value, _ = decoder.raw_decode(line[start:])
+        except json.JSONDecodeError:
+            start = line.find("{", start + 1)
+            continue
+        if isinstance(value, dict):
+            return value
+        start = line.find("{", start + 1)
+    return None
+
+
+def _looks_like_metric_record(record: dict[str, Any]) -> bool:
+    return any(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in record.values())
+
+
+def normalize_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    for index, record in enumerate(records, start=1):
+        item = dict(record)
+        if not isinstance(item.get("step"), (int, float)):
+            parsed_step = _parse_global_step(item.get("global_step/max_steps"))
+            if parsed_step is not None:
+                item["step"] = parsed_step
+        if not isinstance(item.get("iteration"), (int, float)):
+            item["iteration"] = item["step"] if isinstance(item.get("step"), (int, float)) else index
+        normalized.append(item)
+    return normalized
+
+
+def _parse_global_step(value: Any) -> int | None:
+    if isinstance(value, str):
+        match = re.match(r"\s*(\d+)\s*/\s*\d+\s*$", value)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def numeric_series(records: list[dict[str, Any]], key: str) -> list[float] | None:
@@ -79,6 +183,25 @@ def numeric_series(records: list[dict[str, Any]], key: str) -> list[float] | Non
             return None
         values.append(float(value))
     return values
+
+
+def metric_xy_series(records: list[dict[str, Any]], metric_key: str, x_key: str) -> tuple[list[float], list[float]]:
+    x_values: list[float] = []
+    y_values: list[float] = []
+    fallback_index = 1
+    for record in records:
+        y_value = record.get(metric_key)
+        if not isinstance(y_value, (int, float)) or not math.isfinite(float(y_value)):
+            fallback_index += 1
+            continue
+        x_value = record.get(x_key)
+        if isinstance(x_value, (int, float)) and math.isfinite(float(x_value)):
+            x_values.append(float(x_value))
+        else:
+            x_values.append(float(fallback_index))
+        y_values.append(float(y_value))
+        fallback_index += 1
+    return x_values, y_values
 
 
 def available_numeric_metrics(runs: Iterable[RunMetrics], x_key: str) -> list[str]:
@@ -170,17 +293,10 @@ def plot_metric(
     plotted = False
 
     for run_index, run in enumerate(runs):
-        y_values = numeric_series(run.records, metric_name)
-        if y_values is None:
+        x_values, y_values = metric_xy_series(run.records, metric_name, x_key)
+        if not y_values:
             continue
-        x_values = numeric_series(run.records, x_key)
-        if x_values is None:
-            x_values = [float(index + 1) for index in range(len(y_values))]
-        length = min(len(x_values), len(y_values))
-        if length == 0:
-            continue
-        y_values = smooth_series(y_values[:length], smooth)
-        x_values = x_values[:length]
+        y_values = smooth_series(y_values, smooth)
         axis.plot(
             x_values,
             y_values,
@@ -260,10 +376,13 @@ def resolve_output_dir(args: argparse.Namespace) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Plot clean per-metric online GRPO/CMAO training curves with optional run comparison."
+        description=(
+            "Plot clean per-metric GRPO/CMAO training curves from online metrics, "
+            "Swift nohup logs, or trainer_state/log_history JSON."
+        )
     )
-    parser.add_argument("--input", help="Backward-compatible single path to online_metrics.jsonl.")
-    parser.add_argument("--inputs", nargs="+", help="One or more online_metrics.jsonl files to compare.")
+    parser.add_argument("--input", help="Single metrics/log path.")
+    parser.add_argument("--inputs", nargs="+", help="One or more metrics/log paths to compare.")
     parser.add_argument("--labels", nargs="+", help="Labels for each input run.")
     parser.add_argument("--output", help="Backward-compatible output path. Its stem is used as an output directory.")
     parser.add_argument("--output-dir", help="Directory where one image per metric will be saved.")
