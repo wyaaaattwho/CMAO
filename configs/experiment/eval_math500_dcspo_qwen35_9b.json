@@ -1,6 +1,7 @@
 {
   "model": {
-    "name": "outputs/train/dcspo_math500_qwen35_9b_lora/checkpoint-final"
+    "name": "outputs/train/dcspo_math500_qwen35_9b_lora/checkpoint-final",
+    "trust_remote_code": true
   },
   "dataset": {
     "name": "math-500",
