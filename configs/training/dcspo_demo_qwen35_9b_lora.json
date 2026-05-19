@@ -5,9 +5,9 @@
     "trust_remote_code": true
   },
   "data": {
-    "path": "outputs/eval/math500/scores.json",
-    "limit": 64,
-    "utility_field": "correct_quality"
+    "path": "outputs/eval/math500_base_qwen35_9b/scores.json",
+    "limit": 200,
+    "utility_field": "constant"
   },
   "dcspo": {
     "clip_range": 2.0,
@@ -17,7 +17,7 @@
     "output_dir": "outputs/train/dcspo_demo_qwen35_9b_lora",
     "learning_rate": 2e-5,
     "weight_decay": 0.0,
-    "max_steps": 10,
+    "max_steps": 200,
     "num_epochs": 1,
     "per_device_train_batch_size": 1,
     "gradient_accumulation_steps": 8,
