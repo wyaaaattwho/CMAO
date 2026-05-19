@@ -58,6 +58,17 @@ class GeneratorBackendTest(unittest.TestCase):
         self.assertIn("adapter", calls)
         self.assertEqual(backend.model_name, str(adapter_dir))
 
+    def test_outputs_checkpoint_missing_path_raises_clear_error(self) -> None:
+        with patch.dict(
+            "sys.modules",
+            {
+                "torch": object(),
+                "transformers": type("Transformers", (), {"AutoModelForCausalLM": object, "AutoTokenizer": object}),
+            },
+        ):
+            with self.assertRaises(FileNotFoundError):
+                TransformersGeneratorBackend("outputs/train/missing/checkpoint-final")
+
 
 if __name__ == "__main__":
     unittest.main()

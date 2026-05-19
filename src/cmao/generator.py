@@ -27,6 +27,27 @@ class GeneratorBackend:
         raise NotImplementedError
 
 
+
+
+def _resolve_local_model_path(model_name: str) -> Path | None:
+    raw_path = Path(model_name).expanduser()
+    candidates = [raw_path]
+    if not raw_path.is_absolute():
+        repo_root = Path(__file__).resolve().parents[2]
+        candidates.append(repo_root / raw_path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def _looks_like_local_model_path(model_name: str) -> bool:
+    return (
+        model_name.startswith(("/", "./", "../", "~", "outputs/", "data/"))
+        or "/checkpoint-" in model_name
+        or model_name.endswith("checkpoint-final")
+    )
+
 def format_chat_prompt(tokenizer, prompt: str, *, enable_thinking: bool = False) -> str:
     messages = [{"role": "user", "content": prompt.strip()}]
     if hasattr(tokenizer, "apply_chat_template"):
@@ -61,9 +82,15 @@ class TransformersGeneratorBackend(GeneratorBackend):
             raise RuntimeError("transformers and torch are required for sampling.") from exc
 
         self._torch = torch
-        model_path = Path(model_name)
+        local_model_path = _resolve_local_model_path(model_name)
+        if local_model_path is None and _looks_like_local_model_path(model_name):
+            raise FileNotFoundError(
+                f"Local model path does not exist: {model_name}. "
+                "Use an absolute path or run from the repository root."
+            )
+        model_path = local_model_path or Path(model_name)
         adapter_config_path = model_path / "adapter_config.json"
-        if model_path.exists() and adapter_config_path.exists():
+        if local_model_path is not None and adapter_config_path.exists():
             try:
                 from peft import PeftConfig, PeftModel  # type: ignore
             except ImportError as exc:
@@ -85,14 +112,15 @@ class TransformersGeneratorBackend(GeneratorBackend):
             )
             self.model = PeftModel.from_pretrained(base_model, str(model_path))
         else:
+            model_source = str(local_model_path) if local_model_path is not None else model_name
             self.tokenizer = AutoTokenizer.from_pretrained(
-                model_name,
+                model_source,
                 trust_remote_code=trust_remote_code,
             )
             if self.tokenizer.pad_token is None:
                 self.tokenizer.pad_token = self.tokenizer.eos_token
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
+                model_source,
                 device_map=device_map,
                 torch_dtype=torch_dtype,
                 trust_remote_code=trust_remote_code,
