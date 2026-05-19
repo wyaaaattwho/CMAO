@@ -42,6 +42,29 @@ Example:
 cmao train_online_grpo --config configs/training/math500_online_cmao_qwen35_9b_lora.json
 ```
 
+
+## Offline DCSPO
+
+DCSPO is wired as an offline distribution-corrected SFT path. It reuses the same
+model/LoRA stack as online CMAO, but trains on fixed prompt-completion data and
+a frozen behavior/reference model:
+
+```bash
+cmao train_dcspo --config configs/training/dcspo_demo_qwen35_9b_lora.json
+```
+
+The demo config can read existing CMAO `scores.json`/`samples.json` files or a
+plain JSON/JSONL list with `prompt` plus `completion`/`response`/`output`. For
+scored CMAO files, set `data.utility_field` to `constant`, `correctness`,
+`quality`, or `correct_quality`. The loss logs bounded local correction metrics
+in `dcspo_metrics.jsonl`:
+
+```text
+phi_theta = log p_theta(y_t | h_t) + H[p_theta(. | h_t)]
+rho_t = exp(clip(phi_theta - phi_ref, -c, c))
+L = - sum_t stop_gradient(rho_t * utility) * log p_theta(y_t | h_t)
+```
+
 ## Qwen3.5 via ms-swift
 
 The recommended Qwen3.5 path is the official ModelScope Swift stack rather than

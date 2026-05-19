@@ -13,6 +13,7 @@ from .io_utils import load_json, save_json
 from .mode_tagger import ModeTagger
 from .quality_scorer import QualityScorer
 from .reporter import build_report
+from .dcspo_trainer import run_train_dcspo
 from .trainer import run_train_online_grpo
 from .types import GroupedSamples, ScoredGroup, ScoredSample, ScoreBundle
 
@@ -202,3 +203,7 @@ def save_report(input_path: str, output_path: str) -> dict[str, Any]:
 
 def run_train_online(config_path: str) -> dict[str, Any]:
     return run_train_online_grpo(config_path=config_path)
+
+
+def run_train_offline_dcspo(config_path: str) -> dict[str, Any]:
+    return run_train_dcspo(config_path=config_path)

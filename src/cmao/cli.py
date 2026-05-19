@@ -11,6 +11,7 @@ from .pipeline import (
     run_rerank_eval,
     run_sample,
     run_score,
+    run_train_offline_dcspo,
     run_train_online,
     save_report,
 )
@@ -55,6 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     online_train = subparsers.add_parser("train_online_grpo", help="Run online GRPO/CMAO policy training.")
     online_train.add_argument("--config", required=True)
+
+    dcspo_train = subparsers.add_parser("train_dcspo", help="Run offline DCSPO distribution-corrected SFT training.")
+    dcspo_train.add_argument("--config", required=True)
     return parser
 
 
@@ -107,6 +111,10 @@ def main() -> None:
     if args.command == "train_online_grpo":
         summary = run_train_online(args.config)
         print(f"Saved online GRPO summary to {summary['output_dir']}/training_summary.json")
+        return
+    if args.command == "train_dcspo":
+        summary = run_train_offline_dcspo(args.config)
+        print(f"Saved DCSPO summary to {summary['output_dir']}/training_summary.json")
         return
 
     parser.error(f"Unknown command: {args.command}")

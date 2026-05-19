@@ -17,6 +17,17 @@ class LossBreakdown:
         return self.clip_ratio_region_mean
 
 
+@dataclass
+class DCSPOBreakdown:
+    policy_loss: float
+    total_loss: float
+    weight_mean: float
+    weight_min: float
+    weight_max: float
+    delta_phi_mean: float
+    delta_phi_clipped_fraction: float
+
+
 def cmao_clipped_policy_loss(
     current_logprobs,
     old_logprobs,
@@ -106,4 +117,80 @@ def cmao_clipped_policy_loss(
         clip_ratio_region_mean=float(clip_fraction.detach().item()),
         clip_ratio_low_mean=float(clip_low.detach().item()),
         clip_ratio_high_mean=float(clip_high.detach().item()),
+    )
+
+
+def dcspo_weighted_sft_loss(
+    current_logprobs,
+    current_entropies,
+    reference_logprobs,
+    reference_entropies,
+    utilities=None,
+    response_mask=None,
+    clip_range: float = 2.0,
+    normalize_by: str = "tokens",
+):
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover
+        raise RuntimeError("torch is required for DCSPO training loss.") from exc
+
+    current_phi = current_logprobs + current_entropies
+    reference_phi = reference_logprobs + reference_entropies
+    delta_phi = current_phi - reference_phi.detach()
+    clipped_delta_phi = delta_phi.clamp(min=-float(clip_range), max=float(clip_range))
+    rho = torch.exp(clipped_delta_phi)
+
+    weights = rho
+    if utilities is not None:
+        sample_utilities = utilities.to(dtype=weights.dtype, device=weights.device)
+        while sample_utilities.ndim < weights.ndim:
+            sample_utilities = sample_utilities.unsqueeze(-1)
+        weights = weights * sample_utilities
+    weights = weights.detach()
+
+    objective = weights * current_logprobs
+    if response_mask is None:
+        mask = torch.ones_like(current_logprobs, dtype=current_logprobs.dtype)
+    else:
+        mask = response_mask.to(dtype=current_logprobs.dtype, device=current_logprobs.device)
+
+    masked_objective = objective * mask
+    normalized = str(normalize_by or "tokens").lower()
+    if normalized == "tokens":
+        policy_loss = -masked_objective.sum() / mask.sum().clamp_min(1.0)
+    elif normalized == "weighted_tokens":
+        policy_loss = -masked_objective.sum() / (weights * mask).sum().clamp_min(1e-8)
+    elif normalized == "batch":
+        policy_loss = -masked_objective.sum() / max(1, int(current_logprobs.shape[0]))
+    else:
+        raise ValueError(f"Unsupported DCSPO normalize_by: {normalize_by}")
+
+    active = mask > 0
+    if active.any():
+        active_weights = weights[active]
+        active_delta = delta_phi.detach()[active]
+        clipped_fraction = (
+            (active_delta.abs() > float(clip_range)).to(dtype=current_logprobs.dtype).mean()
+        )
+        weight_mean = active_weights.mean()
+        weight_min = active_weights.min()
+        weight_max = active_weights.max()
+        delta_mean = active_delta.mean()
+    else:
+        zero = (current_logprobs * 0.0).sum().detach()
+        clipped_fraction = zero
+        weight_mean = zero
+        weight_min = zero
+        weight_max = zero
+        delta_mean = zero
+
+    return policy_loss, DCSPOBreakdown(
+        policy_loss=float(policy_loss.detach().item()),
+        total_loss=float(policy_loss.detach().item()),
+        weight_mean=float(weight_mean.detach().item()),
+        weight_min=float(weight_min.detach().item()),
+        weight_max=float(weight_max.detach().item()),
+        delta_phi_mean=float(delta_mean.detach().item()),
+        delta_phi_clipped_fraction=float(clipped_fraction.detach().item()),
     )
