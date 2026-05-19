@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .answer_judge import extract_final_answer
@@ -60,18 +61,42 @@ class TransformersGeneratorBackend(GeneratorBackend):
             raise RuntimeError("transformers and torch are required for sampling.") from exc
 
         self._torch = torch
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            trust_remote_code=trust_remote_code,
-        )
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            device_map=device_map,
-            torch_dtype=torch_dtype,
-            trust_remote_code=trust_remote_code,
-        )
+        model_path = Path(model_name)
+        adapter_config_path = model_path / "adapter_config.json"
+        if model_path.exists() and adapter_config_path.exists():
+            try:
+                from peft import PeftConfig, PeftModel  # type: ignore
+            except ImportError as exc:
+                raise RuntimeError("Evaluating a LoRA adapter checkpoint requires peft.") from exc
+            peft_config = PeftConfig.from_pretrained(str(model_path))
+            base_model_name = peft_config.base_model_name_or_path
+            tokenizer_source = str(model_path) if (model_path / "tokenizer_config.json").exists() else base_model_name
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                tokenizer_source,
+                trust_remote_code=trust_remote_code,
+            )
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            base_model = AutoModelForCausalLM.from_pretrained(
+                base_model_name,
+                device_map=device_map,
+                torch_dtype=torch_dtype,
+                trust_remote_code=trust_remote_code,
+            )
+            self.model = PeftModel.from_pretrained(base_model, str(model_path))
+        else:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                trust_remote_code=trust_remote_code,
+            )
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            self.model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                device_map=device_map,
+                torch_dtype=torch_dtype,
+                trust_remote_code=trust_remote_code,
+            )
         self.model.eval()
         self.model_name = model_name
 

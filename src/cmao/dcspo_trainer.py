@@ -104,19 +104,37 @@ def _pick_text(record: dict[str, Any], keys: tuple[str, ...]) -> str:
     return ""
 
 
-def _utility_from_score(score: Any, utility_field: str) -> float:
+def _utility_from_values(answer_correct: bool, quality_score: float, utility_field: str) -> float:
     mode = str(utility_field or "constant").lower()
     if mode in {"constant", "one", "sft"}:
         return 1.0
     if mode in {"correct", "correctness", "answer_correct"}:
-        return 1.0 if bool(getattr(score, "answer_correct", False)) else 0.0
+        return 1.0 if answer_correct else 0.0
     if mode in {"quality", "quality_score"}:
-        return max(0.0, float(getattr(score, "quality_score", 0.0)))
+        return max(0.0, float(quality_score))
     if mode in {"correct_quality", "quality_if_correct"}:
-        if not bool(getattr(score, "answer_correct", False)):
-            return 0.0
-        return max(0.0, float(getattr(score, "quality_score", 0.0)))
+        return max(0.0, float(quality_score)) if answer_correct else 0.0
     return 1.0
+
+
+def _utility_from_score(score: Any, utility_field: str) -> float:
+    return _utility_from_values(
+        answer_correct=bool(getattr(score, "answer_correct", False)),
+        quality_score=float(getattr(score, "quality_score", 0.0)),
+        utility_field=utility_field,
+    )
+
+
+def _utility_from_record(record: dict[str, Any], utility_field: str) -> float:
+    if "utility" in record:
+        return max(0.0, float(record["utility"]))
+    if "score" in record and str(utility_field or "").lower() in {"constant", "one", "sft"}:
+        return max(0.0, float(record["score"]))
+    return _utility_from_values(
+        answer_correct=bool(record.get("answer_correct", False)),
+        quality_score=float(record.get("quality_score", record.get("score", 0.0))),
+        utility_field=utility_field,
+    )
 
 
 def load_dcspo_examples(path: str | Path, utility_field: str = "constant", limit: int | None = None) -> list[DCSPOExample]:
@@ -158,11 +176,11 @@ def load_dcspo_examples(path: str | Path, utility_field: str = "constant", limit
             if not isinstance(record, dict):
                 continue
             prompt = _pick_text(record, ("prompt", "query", "question", "problem", "instruction", "input"))
-            completion = _pick_text(record, ("completion", "response", "output", "answer", "text", "solution"))
+            completion = _pick_text(record, ("completion", "response", "response_text", "output", "answer", "text", "solution"))
             if not prompt or not completion:
                 continue
-            utility = float(record.get("utility", record.get("score", 1.0)))
-            examples.append(DCSPOExample(prompt=prompt, completion=completion, utility=max(0.0, utility), sample_id=str(record.get("id", index))))
+            utility = _utility_from_record(record, utility_field)
+            examples.append(DCSPOExample(prompt=prompt, completion=completion, utility=utility, sample_id=str(record.get("id", index))))
 
     examples = [item for item in examples if item.prompt and item.completion and math.isfinite(item.utility)]
     return examples[:limit] if limit else examples
